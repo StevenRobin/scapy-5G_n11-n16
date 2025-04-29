@@ -7,10 +7,21 @@ import re
 
 # 配置参数
 TARGET_FIELDS = {
-    "supi": "imsi-460030100000022",  # 替换为新的 SUPI 值
+    "supi": "imsi-460030100000022",
+    "pei": "imeisv-1031014000012222",
+    "gpsi": "msisdn-15910012222"
 }
+ORIGINAL_IMSI = "imsi-460030100000000"
+MODIFIED_IMSI = "imsi-460030100000022"
 PCAP_IN = "pcap/N11_create_50p.pcap"
-PCAP_OUT = "pcap/N11_create_50p_mod_fixed09.pcap"
+PCAP_OUT = "pcap/N11_create_50p_mod_fixed07.pcap"
+
+# 新增变量定义
+ueIP = bytes.fromhex("64000001")  # 第47个报文，偏移427bytes后4bytes
+UpfIP = bytes.fromhex("0A000001")  # 第47个报文，偏移762bytes后4bytes
+UpTeid = bytes.fromhex("A0000001")  # 第47个报文，偏移766bytes后4bytes
+gNBIP = bytes.fromhex("14000001")  # 第49个报文，偏移261bytes后4bytes
+DnTeid = bytes.fromhex("B0000001")  # 第49个报文，偏移265bytes后4bytes
 
 
 # 自定义HTTP/2帧头解析
@@ -25,49 +36,14 @@ class HTTP2FrameHeader(Packet):
     ]
 
 
-def modify_http2_path(raw_payload, old_imsi, new_supi):
-    """修改HTTP/2头部中的路径URL"""
-    decoder = Decoder()
-    encoder = Encoder()
-    try:
-        # 解码HTTP/2头部
-        headers = decoder.decode(raw_payload)
-        modified = False
-
-        for i, (key, value) in enumerate(headers):
-            if key.lower() == ":path" and old_imsi in value:
-                # 确保新 SUPI 值长度与原 IMSI 值长度一致
-                if len(new_supi) != len(old_imsi):
-                    print(f"[!] 替换失败: 新 SUPI 值长度 ({len(new_supi)}) 与原 IMSI 值长度 ({len(old_imsi)}) 不一致")
-                    continue
-                print(f"[+] 修改URL路径 {value} -> {value.replace(old_imsi, new_supi)}")
-                headers[i] = (key, value.replace(old_imsi, new_supi))
-                modified = True
-
-        # 如果没有修改，直接返回None
-        if not modified:
-            return None
-
-        # 尝试重新编码HTTP/2头部
-        return encoder.encode(headers)
-
-    except IndexError as e:
-        # 捕获动态表索引错误
-        print(f"[!] HPACK动态表索引错误: {str(e)}")
-        return None
-    except Exception as e:
-        # 捕获其他错误
-        print(f"[!] HTTP/2路径修改错误: {str(e)}")
-        return None
-
-
+# ---------------------- 修复函数定义顺序 ----------------------
 def process_http2_frame_header(raw, offset):
     """解析HTTP/2帧头部"""
     try:
         frame_header = HTTP2FrameHeader(raw[offset:offset + 9])
         frame_len = frame_header.length
         frame_type = frame_header.type
-        stream_id = frame_header.stream_id
+        stream_id = frame_header.stream_id  # 虽然未使用但保留原始结构
         frame_end = offset + 9 + frame_len
         frame_data = raw[offset + 9:frame_end]
         return frame_header, frame_len, frame_type, frame_data, frame_end
@@ -76,22 +52,101 @@ def process_http2_frame_header(raw, offset):
         return None, None, None, None, None
 
 
-def process_packet(pkt, last_seq, modify_url=False, old_imsi=None, new_supi=None):
+def modify_json_data(payload, fields):
+    """修改JSON数据中的目标字段"""
+    try:
+        data = json.loads(payload)
+        modified = False
+        for key in list(data.keys()):  # 创建副本避免修改时迭代错误
+            lkey = key.lower()
+            for target in fields:
+                if target.lower() == lkey:
+                    print(f"[+] 修改JSON字段 {key} ({data[key]}) -> {fields[target]}")
+                    data[key] = fields[target]
+                    modified = True
+        return json.dumps(data, indent=None).encode() if modified else None
+    except Exception as e:
+        print(f"JSON处理错误: {str(e)}")
+        return None
+
+
+def process_http2_headers_frame(frame_data, original_imsi, modified_imsi):
+    """处理HTTP/2 HEADERS帧中的路径"""
+    try:
+        decoder = Decoder()
+        headers = decoder.decode(frame_data)
+        modified = False
+
+        for i in range(len(headers)):
+            name, value = headers[i]
+            if name.lower() == ":path":
+                if original_imsi in value:
+                    new_value = value.replace(original_imsi, modified_imsi)
+                    headers[i] = (name, new_value)
+                    print(f"[+] 修改URL路径: {value} -> {new_value}")
+                    modified = True
+
+        if modified:
+            encoder = Encoder()
+            new_data = encoder.encode(headers)
+            return new_data
+        return frame_data
+    except Exception as e:
+        print(f"HEADERS帧处理错误: {str(e)}")
+        return frame_data
+
+
+def process_http2_data_frame(frame_data, fields):
+    """处理HTTP/2 DATA帧中的多部分数据"""
+    if b"--++Boundary" in frame_data:
+        parts = re.split(b'(--\+\+Boundary)', frame_data)
+        for i in range(len(parts)):
+            if parts[i] == b"--++Boundary" and i + 1 < len(parts):
+                if b"Content-Type:application/json" in parts[i + 1]:
+                    json_part = parts[i + 1].split(b"\r\n\r\n", 1)[1]
+                    modified = modify_json_data(json_part, fields)
+                    if modified:
+                        parts[i + 1] = parts[i + 1].split(b"\r\n\r\n", 1)[0] + b"\r\n\r\n" + modified
+        return b''.join(parts)
+    return frame_data
+
+
+def process_packet(pkt, last_seq, index):
     if pkt.haslayer(TCP) and pkt.haslayer(Raw):
         raw = bytes(pkt[Raw].load)
         offset = 0
         new_payload = b''
 
+        # 第47个报文处理
+        if index == 47:
+            raw = raw[:427] + ueIP + raw[431:762] + UpfIP + raw[766:766] + UpTeid + raw[770:]
+
+        # 第49个报文处理
+        if index == 49:
+            raw = raw[:261] + gNBIP + raw[265:265] + DnTeid + raw[269:]
+
         while offset + 9 <= len(raw):
-            # 解析帧头
+            # 解析帧头（此时process_http2_frame_header已正确定义）
             frame_header, frame_len, frame_type, frame_data, frame_end = process_http2_frame_header(raw, offset)
             if not frame_header:
                 break
 
-            # 修改HEADERS帧（类型0x1）
-            if frame_type == 0x1 and modify_url:
-                modified_frame_data = modify_http2_path(frame_data, old_imsi, new_supi)
-                if modified_frame_data:
+            # 处理HEADERS帧（类型0x1）
+            if frame_type == 0x1:
+                modified_frame_data = process_http2_headers_frame(
+                    frame_data, ORIGINAL_IMSI, MODIFIED_IMSI
+                )
+                if modified_frame_data != frame_data:
+                    frame_len = len(modified_frame_data)
+                    frame_header.length = frame_len
+                    new_payload += frame_header.build() + modified_frame_data
+                    offset = frame_end
+                    continue
+
+            # 处理DATA帧（类型0x0）
+            if frame_type == 0x0:
+                modified_frame_data = process_http2_data_frame(frame_data, TARGET_FIELDS)
+                if modified_frame_data != frame_data:
                     frame_len = len(modified_frame_data)
                     frame_header.length = frame_len
                     new_payload += frame_header.build() + modified_frame_data
@@ -110,6 +165,9 @@ def process_packet(pkt, last_seq, modify_url=False, old_imsi=None, new_supi=None
         pkt[IP].len = len(pkt[IP])
         pkt[TCP].len = pkt[IP].len - (pkt[IP].ihl * 4)
 
+        # 更新捕获长度（重要）
+        pkt.wirelen = len(pkt)  # 设置报文“on wire”长度
+
         # 删除校验和以强制重新计算
         del pkt[IP].chksum
         del pkt[TCP].chksum
@@ -121,7 +179,7 @@ def process_packet(pkt, last_seq, modify_url=False, old_imsi=None, new_supi=None
         last_seq[flow] = pkt[TCP].seq + len(pkt[Raw].load)
 
 
-# 主处理流程
+# ---------------------- 主处理流程 ----------------------
 print(f"开始处理文件 {PCAP_IN}")
 packets = rdpcap(PCAP_IN)
 modified = []
@@ -129,17 +187,9 @@ modified = []
 # 记录每个流的最后TCP序列号
 last_seq = {}
 
-# 替换配置
-OLD_IMSI = "imsi-460030100000000"  # 原始IMSI值
-NEW_SUPI = TARGET_FIELDS["supi"]   # 新SUPI值
-
-for idx, pkt in enumerate(packets):
+for idx, pkt in enumerate(packets, start=1):
     if TCP in pkt and Raw in pkt:
-        # 仅对第47和第49个报文进行URL修改
-        if idx + 1 in [47, 49]:
-            process_packet(pkt, last_seq, modify_url=True, old_imsi=OLD_IMSI, new_supi=NEW_SUPI)
-        else:
-            process_packet(pkt, last_seq, modify_url=False)
+        process_packet(pkt, last_seq, idx)
     modified.append(pkt)
 
 print(f"保存修改到 {PCAP_OUT}")
