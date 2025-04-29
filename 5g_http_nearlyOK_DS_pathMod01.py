@@ -92,7 +92,7 @@ def process_http2_headers_frame(frame_data, original_imsi, modified_imsi):
 def process_http2_data_frame(frame_data, fields):
     """处理HTTP/2 DATA帧中的多部分数据"""
     if b"--++Boundary" in frame_data:
-        parts = re.split(b'(--\+\+Boundary)', frame_data)
+        parts = re.split(br'(--\+\+Boundary)', frame_data)
         for i in range(len(parts)):
             if parts[i] == b"--++Boundary" and i + 1 < len(parts):
                 if b"Content-Type:application/json" in parts[i + 1]:
