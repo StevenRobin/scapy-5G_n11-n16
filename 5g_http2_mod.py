@@ -80,7 +80,7 @@ class HTTP2Packet(Packet):
 # 定义 HTTP2 协议层（与上述相同）
 
 # 假设 PCAP 文件名为 'decrypted_http2_5g.pcap'
-pcap_filename = "d:\\3333.pcap"
+pcap_filename = "pcap/N11_create_50p.pcap"
 
 # 读取 PCAP 文件
 packets = rdpcap(pcap_filename)
@@ -128,7 +128,7 @@ def parse_and_modify_pcap(packets, new_imsi):
                     if imsi_key:
                         print(f"找到 IMSI 字段: {imsi_key} = {decoded_headers[idx]}")
                         decoded_headers[idx] = (
-                        k2, "http://123.1.1.10/nsmf-pdusession/v1/sm-contexts/imsi-460030100000011-5")
+                        k2, "http://123.1.1.10/nsmf-pdusession/v1/sm-contexts/imsi-460030100000022-5")
                         print(f"修改后的 IMSI 字段: {imsi_key} = {decoded_headers[idx]}")
 
                         # 重新编码头部
@@ -154,7 +154,7 @@ def parse_and_modify_pcap(packets, new_imsi):
                         del pkt["IP"].len
                         del pkt["IP"].chksum
                         del pkt["TCP"].chksum
-                        modified_pcap = "d:\\3333_out.pcap"
+                        modified_pcap = "pcap/N11_create_50p_mod.pcap"
                         wrpcap(modified_pcap, packets)
                         return
 
@@ -220,11 +220,11 @@ def parse_and_modify_pcap(packets, new_imsi):
             pkt[Raw].load = tcp_payload
 
     # 保存修改后的 PCAP
-    modified_pcap = "d:\\3333_out.pcap"
+    modified_pcap = "pcap/N11_create_50p_mod.pcap"
     wrpcap(modified_pcap, packets)
     print(f"已保存修改后的 PCAP 文件为 {modified_pcap}")
 
 
 # 示例：修改 IMSI 为 '123456789012345'
-new_imsi = "imsi-460030100000011"
+new_imsi = "imsi-460030100000022"
 parse_and_modify_pcap(packets, new_imsi)
