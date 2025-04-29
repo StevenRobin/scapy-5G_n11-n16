@@ -7,16 +7,11 @@ import re
 
 # 配置参数
 TARGET_FIELDS = {
-    "supi": "imsi-460030100000022",
-    "pei": "imeisv-1031014000012222",
-    "gpsi": "msisdn-15910012222"
+    "supi": "imsi-460030100000022",  # 替换为新的 SUPI 值
 }
 PCAP_IN = "pcap/N11_create_50p.pcap"
-PCAP_OUT = "pcap/N11_create_50p_mod_with_url_fixed3.pcap"
+PCAP_OUT = "pcap/N11_create_50p_mod_fixed09.pcap"
 
-# 新增需求：URL路径中的IMSI替换
-URL_REPLACE_OLD = "imsi-460030100000000"
-URL_REPLACE_NEW = "imsi-460030100000022"
 
 # 自定义HTTP/2帧头解析
 class HTTP2FrameHeader(Packet):
@@ -30,39 +25,39 @@ class HTTP2FrameHeader(Packet):
     ]
 
 
-def modify_json_data(payload, fields):
-    """修改JSON数据中的目标字段"""
-    try:
-        data = json.loads(payload)
-        modified = False
-        for key in list(data.keys()):  # 创建副本避免修改时迭代错误
-            lkey = key.lower()
-            for target in fields:
-                if target.lower() == lkey:
-                    print(f"[+] 修改字段 {key} ({data[key]}) -> {fields[target]}")
-                    data[key] = fields[target]
-                    modified = True
-        return json.dumps(data, indent=None).encode() if modified else None
-    except Exception as e:
-        print(f"JSON处理错误: {str(e)}")
-        return None
-
-
-def modify_http2_path(raw_payload, old, new):
+def modify_http2_path(raw_payload, old_imsi, new_supi):
     """修改HTTP/2头部中的路径URL"""
     decoder = Decoder()
     encoder = Encoder()
     try:
+        # 解码HTTP/2头部
         headers = decoder.decode(raw_payload)
         modified = False
+
         for i, (key, value) in enumerate(headers):
-            if key.lower() == ":path" and old in value:
-                print(f"[+] 修改URL路径 {value} -> {value.replace(old, new)}")
-                headers[i] = (key, value.replace(old, new))
+            if key.lower() == ":path" and old_imsi in value:
+                # 确保新 SUPI 值长度与原 IMSI 值长度一致
+                if len(new_supi) != len(old_imsi):
+                    print(f"[!] 替换失败: 新 SUPI 值长度 ({len(new_supi)}) 与原 IMSI 值长度 ({len(old_imsi)}) 不一致")
+                    continue
+                print(f"[+] 修改URL路径 {value} -> {value.replace(old_imsi, new_supi)}")
+                headers[i] = (key, value.replace(old_imsi, new_supi))
                 modified = True
-        return encoder.encode(headers) if modified else None
+
+        # 如果没有修改，直接返回None
+        if not modified:
+            return None
+
+        # 尝试重新编码HTTP/2头部
+        return encoder.encode(headers)
+
+    except IndexError as e:
+        # 捕获动态表索引错误
+        print(f"[!] HPACK动态表索引错误: {str(e)}")
+        return None
     except Exception as e:
-        print(f"HTTP/2路径修改错误: {str(e)}")
+        # 捕获其他错误
+        print(f"[!] HTTP/2路径修改错误: {str(e)}")
         return None
 
 
@@ -81,7 +76,7 @@ def process_http2_frame_header(raw, offset):
         return None, None, None, None, None
 
 
-def process_packet(pkt, last_seq, modify_url=False):
+def process_packet(pkt, last_seq, modify_url=False, old_imsi=None, new_supi=None):
     if pkt.haslayer(TCP) and pkt.haslayer(Raw):
         raw = bytes(pkt[Raw].load)
         offset = 0
@@ -93,9 +88,9 @@ def process_packet(pkt, last_seq, modify_url=False):
             if not frame_header:
                 break
 
-            # 修改DATA帧（类型0x0）或HEADERS帧（类型0x1）
-            if frame_type in [0x0, 0x1] and modify_url:
-                modified_frame_data = modify_http2_path(frame_data, URL_REPLACE_OLD, URL_REPLACE_NEW)
+            # 修改HEADERS帧（类型0x1）
+            if frame_type == 0x1 and modify_url:
+                modified_frame_data = modify_http2_path(frame_data, old_imsi, new_supi)
                 if modified_frame_data:
                     frame_len = len(modified_frame_data)
                     frame_header.length = frame_len
@@ -134,11 +129,15 @@ modified = []
 # 记录每个流的最后TCP序列号
 last_seq = {}
 
+# 替换配置
+OLD_IMSI = "imsi-460030100000000"  # 原始IMSI值
+NEW_SUPI = TARGET_FIELDS["supi"]   # 新SUPI值
+
 for idx, pkt in enumerate(packets):
     if TCP in pkt and Raw in pkt:
         # 仅对第47和第49个报文进行URL修改
         if idx + 1 in [47, 49]:
-            process_packet(pkt, last_seq, modify_url=True)
+            process_packet(pkt, last_seq, modify_url=True, old_imsi=OLD_IMSI, new_supi=NEW_SUPI)
         else:
             process_packet(pkt, last_seq, modify_url=False)
     modified.append(pkt)
