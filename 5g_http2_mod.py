@@ -123,7 +123,7 @@ def parse_and_modify_pcap(packets, new_imsi):
 
                     if auth:
                         print(f"找到 auth 字段: {auth} = {decoded_headers[idx]}")
-                        decoded_headers[idx] = (":authority", "123.1.1.11")
+                        decoded_headers[idx] = (":authority", "123.1.1.10")
                         print(f"修改后的 auth 字段: {auth} = {decoded_headers[idx]}")
                     if imsi_key:
                         print(f"找到 IMSI 字段: {imsi_key} = {decoded_headers[idx]}")
@@ -154,7 +154,7 @@ def parse_and_modify_pcap(packets, new_imsi):
                         del pkt["IP"].len
                         del pkt["IP"].chksum
                         del pkt["TCP"].chksum
-                        modified_pcap = "pcap/N11_create_50p_mod.pcap"
+                        modified_pcap = "pcap/N11_create_50p_modlll.pcap"
                         wrpcap(modified_pcap, packets)
                         return
 
