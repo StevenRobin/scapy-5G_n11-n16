@@ -77,7 +77,7 @@ def process_http2_data_frame(frame_data, modifications):
     else:
         return modify_json_data(frame_data, modifications)
 
-def process_packet(pkt, modifications):
+def process_packet(pkt, modifications, last_seq):
     if pkt.haslayer(TCP) and pkt.haslayer(Raw):
         raw = bytes(pkt[Raw].load)
         offset = 0
@@ -114,36 +114,46 @@ def process_packet(pkt, modifications):
             pkt[Raw].load = new_payload
 
         # 更新IP和TCP长度
-        pkt[IP].len = len(pkt[IP])
-        pkt[TCP].len = pkt[IP].len - (pkt[IP].ihl * 4)
+        pkt[IP].len = len(pkt[IP])  # 重新计算IP长度
+        pkt[TCP].len = len(pkt[TCP]) + len(pkt[Raw].load)  # 重新计算TCP长度
+        pkt[IP].chksum = None       # 删除IP校验和以便自动重新计算
+        pkt[TCP].chksum = None      # 删除TCP校验和以便自动重新计算
 
-        # 删除校验和以强制重新计算
-        del pkt[IP].chksum
-        del pkt[TCP].chksum
+        # 更新TCP序列号
+        flow = (pkt[IP].src, pkt[IP].dst, pkt[TCP].sport, pkt[TCP].dport)
+        if flow in last_seq:
+            pkt[TCP].seq = last_seq[flow]
+        last_seq[flow] = pkt[TCP].seq + len(pkt[Raw].load)
+
+        # 更新帧长度
+        pkt.wirelen = len(pkt)  # 捕获到的帧总长度
+        pkt.caplen = pkt.wirelen  # 捕获到的有效数据长度
 
 # ---------------------- 主处理流程 ----------------------
 PCAP_IN = "pcap/N16_create_16p.pcap"  # 替换为您的PCAP文件路径
-PCAP_OUT = "pcap/N16_modified18.pcap"   # 替换为输出PCAP文件路径
+PCAP_OUT = "pcap/N16_modified113.pcap"   # 替换为输出PCAP文件路径
 
 # JSON字段修改内容
 MODIFICATIONS = {
-    "supi": "imsi-460012300000001",
-    "pei": "imeisv-8645600000000111",
-    "gpsi": "msisdn-8613900000001",
+    "supi": "imsi-460011234567890",
+    "pei": "imeisv-8611101000000011",
+    "gpsi": "msisdn-8613901000001",
     "icnTunnelInfo": {"ipv4Addr": "10.0.0.1", "gtpTeid": "10000001"},
-    "cnTunnelInfo": {"ipv4Addr": "20.0.0.1", "gtpTeid": "50000001"},
+    "cnTunnelInfo": {"ipv4Addr": "20.0.0.1", "gtpTeid": "20000001"},
     "ueIpv4Address": "100.0.0.1",
-    "nrCellId": "010000001",
-    "dnn": "dnn-10000001"  # 新增的字段修改
+    "nrCellId": "001000001"
 }
 
 print(f"开始处理文件 {PCAP_IN}")
 packets = rdpcap(PCAP_IN)
 modified_packets = []
 
+# 保存每个流的最后TCP序列号
+last_seq = {}
+
 for pkt in packets:
     if TCP in pkt and Raw in pkt:
-        process_packet(pkt, MODIFICATIONS)
+        process_packet(pkt, MODIFICATIONS, last_seq)
     modified_packets.append(pkt)
 
 print(f"保存修改后的PCAP到 {PCAP_OUT}")

@@ -110,7 +110,7 @@ def process_packet(pkt, modifications):
 
 # ---------------------- 主处理流程 ----------------------
 PCAP_IN = "pcap/N16_create_16p.pcap"  # 替换为您的PCAP文件路径
-PCAP_OUT = "pcap/N16_modified.pcap"   # 替换为输出PCAP文件路径
+PCAP_OUT = "pcap/N16_modified11.pcap"   # 替换为输出PCAP文件路径
 
 # JSON字段修改内容
 MODIFICATIONS = {
