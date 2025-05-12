@@ -128,13 +128,16 @@ def process_packet(pkt, modifications, last_seq):
         last_seq[flow] = pkt[TCP].seq + len(pkt[Raw].load)
         print(f"[DEBUG] TCP 序列号更新后: {pkt[TCP].seq}, 负载长度: {len(pkt[Raw].load)}")
 
+
         # 更新帧长度
         pkt.wirelen = len(pkt)  # 捕获到的帧总长度
         pkt.caplen = pkt.wirelen  # 捕获到的有效数据长度
 
+
+
 # ---------------------- 主处理流程 ----------------------
 PCAP_IN = "pcap/N16_create_16p.pcap"  # 替换为您的PCAP文件路径
-PCAP_OUT = "pcap/N16_modified135.pcap"   # 替换为输出PCAP文件路径
+PCAP_OUT = "pcap/N16_modified137.pcap"   # 替换为输出PCAP文件路径
 
 # JSON字段修改内容
 MODIFICATIONS = {
@@ -158,6 +161,9 @@ for pkt in packets:
     if TCP in pkt and Raw in pkt:
         process_packet(pkt, MODIFICATIONS, last_seq)
     modified_packets.append(pkt)
+
+print(f"TCP Seq: {pkt[TCP].seq}, Ack: {pkt[TCP].ack}, Payload Length: {len(pkt[Raw].load)}")
+print(f"HTTP2 Frame Length: {frame_header.length}")
 
 print(f"保存修改后的PCAP到 {PCAP_OUT}")
 wrpcap(PCAP_OUT, modified_packets)
