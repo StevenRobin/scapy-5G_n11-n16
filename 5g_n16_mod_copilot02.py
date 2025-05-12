@@ -135,13 +135,13 @@ PCAP_OUT = "pcap/N16_modified113.pcap"   # 替换为输出PCAP文件路径
 
 # JSON字段修改内容
 MODIFICATIONS = {
-    "supi": "imsi-460011234567890",
+    "supi": "imsi-460012300000001",
     "pei": "imeisv-8611101000000011",
-    "gpsi": "msisdn-8613901000001",
+    "gpsi": "msisdn-8613900000001",
     "icnTunnelInfo": {"ipv4Addr": "10.0.0.1", "gtpTeid": "10000001"},
-    "cnTunnelInfo": {"ipv4Addr": "20.0.0.1", "gtpTeid": "20000001"},
+    "cnTunnelInfo": {"ipv4Addr": "20.0.0.1", "gtpTeid": "50000001"},
     "ueIpv4Address": "100.0.0.1",
-    "nrCellId": "001000001"
+    "nrCellId": "010000001"
 }
 
 print(f"开始处理文件 {PCAP_IN}")
