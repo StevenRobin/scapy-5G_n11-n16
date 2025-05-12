@@ -24,17 +24,17 @@ def process_http2_frame_header(raw, offset):
         frame_type = frame_header.type
         frame_end = offset + 9 + frame_len
         frame_data = raw[offset + 9:frame_end]
+        print(f"[DEBUG] HTTP/2 Frame Header - Offset: {offset}, Length: {frame_len}, Type: {frame_type}, Stream ID: {frame_header.stream_id}")
         return frame_header, frame_len, frame_type, frame_data, frame_end
     except Exception as e:
-        print(f"帧解析错误: {str(e)}")
+        print(f"[ERROR] 帧解析错误: {str(e)}")
         return None, None, None, None, None
 
 def modify_json_data(payload, modifications):
     """修改JSON数据中的目标字段"""
     try:
-        # 跳过空数据段
         if not payload.strip():
-            print("[跳过空数据段]")
+            print("[DEBUG] 跳过空数据段")
             return None
 
         data = json.loads(payload)
@@ -46,7 +46,7 @@ def modify_json_data(payload, modifications):
             if isinstance(obj, dict):
                 for key, value in obj.items():
                     if key in modifications:
-                        print(f"[+] 修改JSON字段 {key}: {value} -> {modifications[key]}")
+                        print(f"[DEBUG] 修改JSON字段 {key}: {value} -> {modifications[key]}")
                         obj[key] = modifications[key]
                         modified = True
                     elif isinstance(value, (dict, list)):
@@ -59,7 +59,7 @@ def modify_json_data(payload, modifications):
         recursive_modify(data, modifications)
         return json.dumps(data, indent=None).encode() if modified else None
     except Exception as e:
-        print(f"JSON处理错误: {str(e)}")
+        print(f"[ERROR] JSON处理错误: {str(e)}")
         return None
 
 def process_http2_data_frame(frame_data, modifications):
@@ -91,7 +91,7 @@ def process_packet(pkt, modifications, last_seq):
 
             # 跳过空帧数据段
             if frame_len == 0:
-                print("[跳过空HTTP/2帧]")
+                print("[DEBUG] 跳过空HTTP/2帧")
                 offset = frame_end
                 continue
 
@@ -102,6 +102,7 @@ def process_packet(pkt, modifications, last_seq):
                     frame_len = len(modified_frame_data)
                     frame_header.length = frame_len
                     new_payload += frame_header.build() + modified_frame_data
+                    print(f"[DEBUG] 修改后HTTP/2 DATA帧长度: {frame_len}")
                     offset = frame_end
                     continue
 
@@ -119,17 +120,13 @@ def process_packet(pkt, modifications, last_seq):
         pkt[IP].chksum = None       # 删除IP校验和以便自动重新计算
         pkt[TCP].chksum = None      # 删除TCP校验和以便自动重新计算
 
-        # 获取五元组信息
-        flow_up = (pkt[IP].src, pkt[IP].dst, pkt[TCP].sport, pkt[TCP].dport)
-        flow_down = (pkt[IP].dst, pkt[IP].src, pkt[TCP].dport, pkt[TCP].sport)
-
-        # 根据方向更新TCP序列号
-        if flow_up in last_seq:
-            pkt[TCP].seq = last_seq[flow_up]
-        last_seq[flow_up] = pkt[TCP].seq + len(pkt[Raw].load)
-
-        if flow_down in last_seq:
-            pkt[TCP].ack = last_seq[flow_down]
+        # 调试打印TCP序列号和校验和
+        print(f"[DEBUG] TCP 序列号更新前: {pkt[TCP].seq}")
+        flow = (pkt[IP].src, pkt[IP].dst, pkt[TCP].sport, pkt[TCP].dport)
+        if flow in last_seq:
+            pkt[TCP].seq = last_seq[flow]
+        last_seq[flow] = pkt[TCP].seq + len(pkt[Raw].load)
+        print(f"[DEBUG] TCP 序列号更新后: {pkt[TCP].seq}, 负载长度: {len(pkt[Raw].load)}")
 
         # 更新帧长度
         pkt.wirelen = len(pkt)  # 捕获到的帧总长度
@@ -137,7 +134,7 @@ def process_packet(pkt, modifications, last_seq):
 
 # ---------------------- 主处理流程 ----------------------
 PCAP_IN = "pcap/N16_create_16p.pcap"  # 替换为您的PCAP文件路径
-PCAP_OUT = "pcap/N16_modified122.pcap"   # 替换为输出PCAP文件路径
+PCAP_OUT = "pcap/N16_modified135.pcap"   # 替换为输出PCAP文件路径
 
 # JSON字段修改内容
 MODIFICATIONS = {
