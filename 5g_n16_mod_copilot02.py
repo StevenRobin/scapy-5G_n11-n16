@@ -39,11 +39,24 @@ def modify_json_data(payload, modifications):
 
         data = json.loads(payload)
         modified = False
-        for key, value in modifications.items():
-            if key in data:
-                print(f"[+] 修改JSON字段 {key}: {data[key]} -> {value}")
-                data[key] = value
-                modified = True
+
+        def recursive_modify(obj, modifications):
+            """递归修改嵌套JSON对象"""
+            nonlocal modified
+            if isinstance(obj, dict):
+                for key, value in obj.items():
+                    if key in modifications:
+                        print(f"[+] 修改JSON字段 {key}: {value} -> {modifications[key]}")
+                        obj[key] = modifications[key]
+                        modified = True
+                    elif isinstance(value, (dict, list)):
+                        recursive_modify(value, modifications)
+            elif isinstance(obj, list):
+                for item in obj:
+                    if isinstance(item, (dict, list)):
+                        recursive_modify(item, modifications)
+
+        recursive_modify(data, modifications)
         return json.dumps(data, indent=None).encode() if modified else None
     except Exception as e:
         print(f"JSON处理错误: {str(e)}")
@@ -110,17 +123,18 @@ def process_packet(pkt, modifications):
 
 # ---------------------- 主处理流程 ----------------------
 PCAP_IN = "pcap/N16_create_16p.pcap"  # 替换为您的PCAP文件路径
-PCAP_OUT = "pcap/N16_modified.pcap"   # 替换为输出PCAP文件路径
+PCAP_OUT = "pcap/N16_modified18.pcap"   # 替换为输出PCAP文件路径
 
 # JSON字段修改内容
 MODIFICATIONS = {
-    "supi": "imsi-460011234567890",
-    "pei": "imeisv-8611101000000011",
-    "gpsi": "msisdn-8613901000001",
+    "supi": "imsi-460012300000001",
+    "pei": "imeisv-8645600000000111",
+    "gpsi": "msisdn-8613900000001",
     "icnTunnelInfo": {"ipv4Addr": "10.0.0.1", "gtpTeid": "10000001"},
-    "cnTunnelInfo": {"ipv4Addr": "20.0.0.1", "gtpTeid": "20000001"},
+    "cnTunnelInfo": {"ipv4Addr": "20.0.0.1", "gtpTeid": "50000001"},
     "ueIpv4Address": "100.0.0.1",
-    "nrCellId": "001000001"
+    "nrCellId": "010000001",
+    "dnn": "dnn-10000001"  # 新增的字段修改
 }
 
 print(f"开始处理文件 {PCAP_IN}")
