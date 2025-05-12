@@ -87,7 +87,7 @@ def process_http2_data_frame(frame_data, modifications):
         modified = modify_json_data(frame_data, modifications)
         return modified if modified else frame_data
 
-def process_packet(pkt, modifications, seq_diff, ip_replacements, packet_index, target_packet):
+def process_packet(pkt, modifications, seq_diff, ip_replacements):
     """
     对 TCP 包内部的 HTTP/2 数据帧进行处理：
     1. 解析所有 HTTP/2 帧，对 DATA 帧进行 JSON 数据修改。
@@ -123,8 +123,6 @@ def process_packet(pkt, modifications, seq_diff, ip_replacements, packet_index, 
 
             # 处理 DATA 帧（类型为 0x0）
             if frame_type == 0x0:
-                if packet_index == target_packet:
-                    modifications["ismfPduSessionUri"] = "http://200.20.20.26:8080/nsmf-pdusession/v1/pdu-sessions/10000001"
                 modified_frame_data = process_http2_data_frame(frame_data, modifications)
                 if modified_frame_data:
                     frame_len = len(modified_frame_data)
@@ -166,7 +164,7 @@ def process_packet(pkt, modifications, seq_diff, ip_replacements, packet_index, 
 
 # ---------------------- 主处理流程 ----------------------
 PCAP_IN = "pcap/N16_create_16p.pcap"   # 输入 PCAP 文件路径
-PCAP_OUT = "pcap/N16_modified128.pcap"   # 输出 PCAP 文件路径
+PCAP_OUT = "pcap/N16_modified127.pcap"   # 输出 PCAP 文件路径
 
 # JSON 字段修改内容
 MODIFICATIONS = {
@@ -176,7 +174,8 @@ MODIFICATIONS = {
     "icnTunnelInfo": {"ipv4Addr": "10.0.0.1", "gtpTeid": "10000001"},
     "cnTunnelInfo": {"ipv4Addr": "20.0.0.1", "gtpTeid": "50000001"},
     "ueIpv4Address": "100.0.0.1",
-    "nrCellId": "010000001"
+    "nrCellId": "010000001",
+    "ismfPduSessionUri": "http://200.20.20.26:8080/nsmf-pdusession/v1/pdu-sessions/10000001"  # Updated ID
 }
 
 # 五元组 IP 替换内容
@@ -192,9 +191,9 @@ modified_packets = []
 # 保存每个流累计的 TCP 序号偏移量
 seq_diff = {}
 
-for idx, pkt in enumerate(packets, start=1):
+for pkt in packets:
     if TCP in pkt or Raw in pkt:
-        process_packet(pkt, MODIFICATIONS, seq_diff, IP_REPLACEMENTS, idx, 13)
+        process_packet(pkt, MODIFICATIONS, seq_diff, IP_REPLACEMENTS)
     modified_packets.append(pkt)
 
 print(f"保存修改后的 PCAP 到 {PCAP_OUT}")
