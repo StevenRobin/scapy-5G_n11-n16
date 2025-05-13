@@ -14,7 +14,7 @@ TARGET_FIELDS = {
 ORIGINAL_IMSI = "imsi-460030100000000"
 MODIFIED_IMSI = "imsi-460030100000022"
 PCAP_IN = "pcap/N11_create_50p.pcap"
-PCAP_OUT = "pcap/N11_create_50p_mod_fixed07.pcap"
+PCAP_OUT = "pcap/N11_101.pcap"
 
 
 # 自定义HTTP/2帧头解析
