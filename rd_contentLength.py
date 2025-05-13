@@ -15,7 +15,7 @@ def parse_http2_frames(payload):
     return frames
 
 def main():
-    pcap_file = 'pcap/N16_create_16p.pcap'
+    pcap_file = 'pcap/N16_143.pcap'
     packets = rdpcap(pcap_file)
 
     # 只拼接 src=12346, dst=80 方向的payload

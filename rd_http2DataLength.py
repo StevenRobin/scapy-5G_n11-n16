@@ -15,7 +15,7 @@ def parse_http2_frame_length(tcp_payload):
     return lengths
 
 def main():
-    pcap_file = 'pcap/N16_modified130.pcap'
+    pcap_file = 'pcap/N16_143.pcap'
     packets = rdpcap(pcap_file)
     idxs = [10, 12, 14]  # 0-based, 第11、13、15个包
 
