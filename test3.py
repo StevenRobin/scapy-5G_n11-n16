@@ -84,18 +84,42 @@ def process_http2_headers_frame(frame_data, new_path, new_authority):
         decoder = Decoder()
         headers = decoder.decode(frame_data)
         modified = False
-        new_headers = []
+
+        # 1. 拆分伪头字段和普通头字段
+        pseudo_headers = []
+        normal_headers = []
         for name, value in headers:
-            if name == ":path":
-                print(f"[+] 修改 header {name}: {value} -> {new_path}")
-                new_headers.append((name, new_path))
-                modified = True
-            elif name == ":authority":
-                print(f"[+] 修改 header {name}: {value} -> {new_authority}")
-                new_headers.append((name, new_authority))
-                modified = True
+            if name.startswith(":"):
+                pseudo_headers.append((name, value))
             else:
-                new_headers.append((name, value))
+                normal_headers.append((name, value))
+
+        # 2. 替换 :path 和 :authority，其余伪头字段保持
+        pseudo_dict = dict(pseudo_headers)
+        pseudo_modified = False
+        if ":path" in pseudo_dict and pseudo_dict[":path"] != new_path:
+            pseudo_dict[":path"] = new_path
+            modified = True
+            pseudo_modified = True
+        if ":authority" in pseudo_dict and pseudo_dict[":authority"] != new_authority:
+            pseudo_dict[":authority"] = new_authority
+            modified = True
+            pseudo_modified = True
+
+        # 3. 按HTTP/2规范顺序重新组装伪头字段
+        pseudo_order = [":method", ":scheme", ":authority", ":path"]
+        new_pseudo_headers = []
+        for key in pseudo_order:
+            if key in pseudo_dict:
+                new_pseudo_headers.append((key, pseudo_dict[key]))
+        # 追加原始伪头中非规范伪头（如:protocol等，极少见但需兼容）
+        for k, v in pseudo_headers:
+            if k not in pseudo_order:
+                new_pseudo_headers.append((k, v))
+
+        # 4. 普通头字段保持原顺序、重复项、大小写完全不变
+        new_headers = new_pseudo_headers + normal_headers
+
         if modified:
             encoder = Encoder()
             new_frame_data = encoder.encode(new_headers)
@@ -138,7 +162,9 @@ def process_packet(pkt, seq_diff, ip_replacements, modifications):
             offset = 0
             new_payload = b''
             new_path = "/nsmf-pdusession/v1/sm-contexts/1000000001/retrieve"
-            new_authority = "smf.smf"
+
+            new_authority = "200.20.20.25:8080"
+
             while offset < len(raw):
                 if offset + 9 > len(raw):
                     new_payload += raw[offset:]
@@ -149,7 +175,7 @@ def process_packet(pkt, seq_diff, ip_replacements, modifications):
                     break
                 if frame_type == 0x1:
                     modified_frame_data = process_http2_headers_frame(frame_data, new_path, new_authority)
-                    if modified_frame_data:
+                    if modified_frame_data and modified_frame_data != frame_data:
                         frame_len = len(modified_frame_data)
                         frame_header.length = frame_len
                         new_payload += frame_header.build() + modified_frame_data
@@ -157,7 +183,7 @@ def process_packet(pkt, seq_diff, ip_replacements, modifications):
                         continue
                 if frame_type == 0x0:
                     modified_frame_data = process_http2_data_frame(frame_data, modifications)
-                    if modified_frame_data:
+                    if modified_frame_data and modified_frame_data != frame_data:
                         frame_len = len(modified_frame_data)
                         frame_header.length = frame_len
                         new_payload += frame_header.build() + modified_frame_data
@@ -196,7 +222,7 @@ def process_packet(pkt, seq_diff, ip_replacements, modifications):
 
 # --- 主处理流程 ---
 PCAP_IN = "pcap/N16_create_16p.pcap"
-PCAP_OUT = "pcap/N16_148.pcap"
+PCAP_OUT = "pcap/N16_155.pcap"
 
 MODIFICATIONS = {
     "supi": "imsi-460012300000001",
@@ -210,7 +236,7 @@ MODIFICATIONS = {
     "nrCellId": "010000001",
     "uplink": "5000000000",
     "downlink": "5000000000",
-    "ismfPduSessionUri": "http://30.0.0.1:80/nsmf-pdusession/v1/pdu-sessions/100000001"
+    "ismfPduSessionUri": "http://30.0.0.1:80/nsmf-pdusession/v1/pdu-sessions/10000001"
 }
 IP_REPLACEMENTS = {
     "200.20.20.26": "30.0.0.1",

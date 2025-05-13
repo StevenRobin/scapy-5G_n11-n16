@@ -5,6 +5,7 @@ from hpack import Decoder, Encoder
 import json
 import re
 
+
 class HTTP2FrameHeader(Packet):
     name = "HTTP2FrameHeader"
     fields_desc = [
@@ -14,6 +15,7 @@ class HTTP2FrameHeader(Packet):
         BitField("reserved", 0, 1),
         BitField("stream_id", 0, 31)
     ]
+
 
 def process_http2_frame_header(raw, offset):
     try:
@@ -34,6 +36,7 @@ def process_http2_frame_header(raw, offset):
         print(f"帧解析错误: {str(e)}")
         return None, None, None, None, len(raw)
 
+
 def modify_json_data(payload, modifications):
     try:
         if not payload.strip():
@@ -41,6 +44,7 @@ def modify_json_data(payload, modifications):
             return None
         data = json.loads(payload)
         modified = False
+
         def recursive_modify(obj, modifications):
             nonlocal modified
             if isinstance(obj, dict):
@@ -55,12 +59,13 @@ def modify_json_data(payload, modifications):
                 for item in obj:
                     if isinstance(item, (dict, list)):
                         recursive_modify(item, modifications)
+
         recursive_modify(data, modifications)
-        # 使用 separators=(',', ':') 保证无多余空格
         return json.dumps(data, separators=(',', ':')).encode() if modified else None
     except Exception as e:
         print(f"JSON处理错误: {str(e)}")
         return None
+
 
 def process_http2_data_frame(frame_data, modifications):
     if b"--++Boundary" in frame_data:
@@ -79,12 +84,14 @@ def process_http2_data_frame(frame_data, modifications):
         modified = modify_json_data(frame_data, modifications)
         return modified if modified else frame_data
 
-def process_http2_headers_frame(frame_data, new_path, new_authority):
+
+def process_http2_headers_frame(frame_data, new_path, new_authority, data_length=None):
     try:
         decoder = Decoder()
         headers = decoder.decode(frame_data)
         modified = False
         new_headers = []
+        content_length_updated = False
         for name, value in headers:
             if name == ":path":
                 print(f"[+] 修改 header {name}: {value} -> {new_path}")
@@ -94,8 +101,18 @@ def process_http2_headers_frame(frame_data, new_path, new_authority):
                 print(f"[+] 修改 header {name}: {value} -> {new_authority}")
                 new_headers.append((name, new_authority))
                 modified = True
+            elif name == "content-length" and data_length is not None:
+                new_value = str(data_length)
+                print(f"[+] 修改 header content-length: {value} -> {new_value}")
+                new_headers.append((name, new_value))
+                modified = True
+                content_length_updated = True
             else:
                 new_headers.append((name, value))
+        if data_length is not None and not content_length_updated:
+            print(f"[+] 添加 header content-length: {data_length}")
+            new_headers.append(("content-length", str(data_length)))
+            modified = True
         if modified:
             encoder = Encoder()
             new_frame_data = encoder.encode(new_headers)
@@ -106,7 +123,10 @@ def process_http2_headers_frame(frame_data, new_path, new_authority):
         print(f"Header处理错误: {str(e)}")
         return frame_data
 
+
 def process_packet(pkt, seq_diff, ip_replacements, modifications):
+    stream_data_lengths = {}  # 新增：记录各流DATA帧长度
+
     if pkt.haslayer(IP):
         if pkt[IP].src in ip_replacements:
             print(f"[+] 替换源IP {pkt[IP].src} -> {ip_replacements[pkt[IP].src]}")
@@ -132,30 +152,42 @@ def process_packet(pkt, seq_diff, ip_replacements, modifications):
         diff = 0
         new_payload = None
 
-        # 只对SYN/FIN/RST以外的有效payload包做累计
         if has_payload and not (is_syn or is_fin or is_rst):
             raw = bytes(pkt[Raw].load)
             offset = 0
             new_payload = b''
             new_path = "/nsmf-pdusession/v1/sm-contexts/1000000001/retrieve"
             new_authority = "smf.smf"
-            while offset < len(raw):
-                if offset + 9 > len(raw):
-                    new_payload += raw[offset:]
-                    offset = len(raw)
+
+            # 第一遍处理DATA帧，记录各流长度
+            temp_offset = offset
+            while temp_offset < len(raw):
+                fh, fl, ft, fd, fe = process_http2_frame_header(raw, temp_offset)
+                if fh is None:
                     break
+                if ft == 0x0:  # DATA帧
+                    modified_data = process_http2_data_frame(fd, modifications)
+                    if modified_data:
+                        stream_data_lengths[fh.stream_id] = len(modified_data)
+                temp_offset = fe
+
+            # 第二遍处理实际修改
+            while offset < len(raw):
                 frame_header, frame_len, frame_type, frame_data, frame_end = process_http2_frame_header(raw, offset)
                 if frame_header is None:
                     break
-                if frame_type == 0x1:
-                    modified_frame_data = process_http2_headers_frame(frame_data, new_path, new_authority)
+                stream_id = frame_header.stream_id
+                data_length = stream_data_lengths.get(stream_id, None)
+
+                if frame_type == 0x1:  # HEADERS帧
+                    modified_frame_data = process_http2_headers_frame(frame_data, new_path, new_authority, data_length)
                     if modified_frame_data:
                         frame_len = len(modified_frame_data)
                         frame_header.length = frame_len
                         new_payload += frame_header.build() + modified_frame_data
                         offset = frame_end
                         continue
-                if frame_type == 0x0:
+                elif frame_type == 0x0:  # DATA帧
                     modified_frame_data = process_http2_data_frame(frame_data, modifications)
                     if modified_frame_data:
                         frame_len = len(modified_frame_data)
@@ -165,25 +197,21 @@ def process_packet(pkt, seq_diff, ip_replacements, modifications):
                         continue
                 new_payload += raw[offset:frame_end]
                 offset = frame_end
+
             original_length = len(raw)
             new_length = len(new_payload)
             diff = new_length - original_length
             pkt[Raw].load = new_payload
 
-            # 修正seq/ack
             pkt[TCP].seq = pkt[TCP].seq + seq_diff[flow]
             if pkt[TCP].flags & 0x10 and hasattr(pkt[TCP], 'ack'):
                 pkt[TCP].ack = pkt[TCP].ack + seq_diff[rev_flow]
-            # 只有有payload非SYN/FIN/RST才累计
             seq_diff[flow] += diff
-
         else:
-            # 其它包（SYN/FIN/RST/无payload）只修正seq/ack，不累计
             pkt[TCP].seq = pkt[TCP].seq + seq_diff[flow]
             if pkt[TCP].flags & 0x10 and hasattr(pkt[TCP], 'ack'):
                 pkt[TCP].ack = pkt[TCP].ack + seq_diff[rev_flow]
 
-        # 清空校验和和长度，交给 scapy 重算
         if hasattr(pkt[IP], 'chksum'):
             del pkt[IP].chksum
         if hasattr(pkt[TCP], 'chksum'):
@@ -194,9 +222,10 @@ def process_packet(pkt, seq_diff, ip_replacements, modifications):
         pkt.wirelen = len(pkt)
         pkt.caplen = pkt.wirelen
 
+
 # --- 主处理流程 ---
 PCAP_IN = "pcap/N16_create_16p.pcap"
-PCAP_OUT = "pcap/N16_148.pcap"
+PCAP_OUT = "pcap/N16_101.pcap"
 
 MODIFICATIONS = {
     "supi": "imsi-460012300000001",
