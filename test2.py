@@ -123,22 +123,24 @@ def process_packet(pkt, modifications, seq_diff, ip_replacements, packet_number)
                 break
 
             # 为特定包号(11,13,15)检查并打印Content-Length值
+            # 为特定包号(11,13,15)检查并打印Content-Length值
             if packet_number in [11, 13, 15]:
-                print(f"[调试] 检查数据包 {packet_number} 的 Content-Length")  # 新增调试信息
+                print(f"[调试] 检查数据包 {packet_number} 的 Content-Length")
                 if frame_data:
-                    print(f"[调试] 数据包 {packet_number} 帧数据长度: {len(frame_data)} 字节")  # 新增调试信息
+                    print(f"[调试] 数据包 {packet_number} 帧数据长度: {len(frame_data)} 字节")
                     try:
                         frame_data_str = frame_data.decode('utf-8', errors='ignore')
-                        print(f"[调试] 帧数据前100字节: {frame_data_str[:100]}")  # 新增调试信息
+                        print(f"[调试] 帧数据前100字节: {frame_data_str[:100]}")
                     except Exception as e:
                         print(f"[调试] 帧数据解码失败: {str(e)}")
 
-                    match = re.search(b"content-length: *(\d+)", frame_data.lower())
+                    # 修复正则表达式中的转义序列
+                    match = re.search(br"content-length: *(\d+)", frame_data.lower())
                     if match:
                         content_length_value = match.group(1).decode('utf-8')
                         print(f"[包号 {packet_number}] Content-Length: {content_length_value}")
                     else:
-                        print(f"[调试] 数据包 {packet_number} 未找到 Content-Length")  # 新增调试信息
+                        print(f"[调试] 数据包 {packet_number} 未找到 Content-Length")
 
             # 处理 DATA 帧（类型为 0x0）
             if frame_type == 0x0:
@@ -185,7 +187,6 @@ def process_packet(pkt, modifications, seq_diff, ip_replacements, packet_number)
 
 
 # ---------------------- 主处理流程 ----------------------
-print(f"[调试] 脚本启动时间: {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")  # 新增调试信息
 PCAP_IN = "pcap/N16_create_16p.pcap"  # 输入 PCAP 文件路径
 PCAP_OUT = "pcap/N16_modified116.pcap"  # 输出 PCAP 文件路径
 
@@ -200,7 +201,7 @@ MODIFICATIONS = {
     "nrCellId": "010000001",
     "uplink": "5000000000",
     "downlink": "5000000000",
-    "ismfPduSessionUri": "http://200.20.20.26:8080/nsmf-pdusession/v1/pdu-sessions/10000001"  # Updated ID
+    "ismfPduSessionUri": "http://200.20.20.26:80/nsmf-pdusession/v1/pdu-sessions/10000001"  # Updated ID
 }
 
 # 五元组 IP 替换内容
