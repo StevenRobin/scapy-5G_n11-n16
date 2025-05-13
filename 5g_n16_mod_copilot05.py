@@ -164,17 +164,21 @@ def process_packet(pkt, modifications, seq_diff, ip_replacements):
 
 # ---------------------- 主处理流程 ----------------------
 PCAP_IN = "pcap/N16_create_16p.pcap"   # 输入 PCAP 文件路径
-PCAP_OUT = "pcap/N16_modified127.pcap"   # 输出 PCAP 文件路径
+PCAP_OUT = "pcap/N16_modified130.pcap"   # 输出 PCAP 文件路径
 
 # JSON 字段修改内容
 MODIFICATIONS = {
     "supi": "imsi-460012300000001",
     "pei": "imeisv-8611101000000011",
     "gpsi": "msisdn-8613900000001",
+    "dnn": "dnn12345",
+    "ismfId": "c251849c-681e-48ba-918b-000010000001",
     "icnTunnelInfo": {"ipv4Addr": "10.0.0.1", "gtpTeid": "10000001"},
     "cnTunnelInfo": {"ipv4Addr": "20.0.0.1", "gtpTeid": "50000001"},
     "ueIpv4Address": "100.0.0.1",
     "nrCellId": "010000001",
+    "uplink": "5000000000",
+    "downlink": "5000000000",
     "ismfPduSessionUri": "http://200.20.20.26:8080/nsmf-pdusession/v1/pdu-sessions/10000001"  # Updated ID
 }
 
