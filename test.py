@@ -171,7 +171,7 @@ def process_packet(pkt, modifications, seq_diff, ip_replacements):
 
 # ---------------------- 主处理流程 ----------------------
 PCAP_IN = "pcap/N16_create_16p.pcap"   # 输入 PCAP 文件路径
-PCAP_OUT = "pcap/N16_modified111.pcap"   # 输出 PCAP 文件路径
+PCAP_OUT = "pcap/N16_modified112.pcap"   # 输出 PCAP 文件路径
 
 # JSON 字段修改内容
 MODIFICATIONS = {
@@ -184,6 +184,8 @@ MODIFICATIONS = {
     "nrCellId": "010000001",
     "uplink": "5000000000",
     "downlink": "5000000000",
+    "path": "/nsmf-pdusession/v1/sm-contexts/1000000001/retrieve",
+    "authority": "200.20.20.25:80",
     "ismfPduSessionUri": "http://200.20.20.26:80/nsmf-pdusession/v1/pdu-sessions/10000001"  # Updated ID
 }
 
