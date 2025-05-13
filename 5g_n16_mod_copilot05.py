@@ -179,7 +179,7 @@ MODIFICATIONS = {
     "nrCellId": "010000001",
     "uplink": "5000000000",
     "downlink": "5000000000",
-    "ismfPduSessionUri": "http://200.20.20.26:8080/nsmf-pdusession/v1/pdu-sessions/10000001"  # Updated ID
+    "ismfPduSessionUri": "http://200.20.20.26:80/nsmf-pdusession/v1/pdu-sessions/10000001"  # Updated ID
 }
 
 # 五元组 IP 替换内容

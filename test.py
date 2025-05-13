@@ -37,34 +37,62 @@ def process_http2_frame_header(raw, offset):
         print(f"帧解析错误: {str(e)}")
         return None, None, None, None, len(raw)
 
-def process_http2_data_frame(frame_data, modifications):
-    """处理 HTTP/2 数据帧中的 JSON 数据"""
+def modify_json_data(payload, modifications):
+    """修改 JSON 数据中的目标字段"""
     try:
-        decoder = Decoder()
-        decoded_headers = dict(decoder.decode(frame_data))
-        # 遍历并修改内容
-        if "content-length" in decoded_headers:
-            print(f"[+] 原始 content-length: {decoded_headers['content-length']}")
-            decoded_headers["content-length"] = str(modifications)
-            print(f"[+] 修改后 content-length: {decoded_headers['content-length']}")
-        encoder = Encoder()
-        return encoder.encode(decoded_headers.items())
+        # 跳过空数据段
+        if not payload.strip():
+            print("[跳过空数据段]")
+            return None
+        data = json.loads(payload)
+        modified = False
+
+        def recursive_modify(obj, modifications):
+            """递归修改嵌套 JSON 对象"""
+            nonlocal modified
+            if isinstance(obj, dict):
+                for key, value in obj.items():
+                    if key in modifications:
+                        print(f"[+] 修改 JSON 字段 {key}: {value} -> {modifications[key]}")
+                        obj[key] = modifications[key]
+                        modified = True
+                    elif isinstance(value, (dict, list)):
+                        recursive_modify(value, modifications)
+            elif isinstance(obj, list):
+                for item in obj:
+                    if isinstance(item, (dict, list)):
+                        recursive_modify(item, modifications)
+        recursive_modify(data, modifications)
+        return json.dumps(data, indent=None).encode() if modified else None
     except Exception as e:
-        print(f"[HTTP/2 数据帧解析错误] {str(e)}")
-        return frame_data
+        print(f"JSON处理错误: {str(e)}")
+        return None
 
-def modify_content_length(packet_index, frame_header, target_lengths):
-    """根据给定的报文索引，修改 content-length 字段"""
-    if packet_index in target_lengths:
-        print(f"[+] 修改第 {packet_index} 个报文的 content-length 为 {target_lengths[packet_index]}")
-        frame_header.length = target_lengths[packet_index]
+def process_http2_data_frame(frame_data, modifications):
+    """处理 HTTP/2 DATA 帧中的多部分数据"""
+    if b"--++Boundary" in frame_data:
+        parts = re.split(br'(--\+\+Boundary)', frame_data)
+        for i in range(len(parts)):
+            if parts[i] == b"--++Boundary" and i + 1 < len(parts):
+                if b"Content-Type:application/json" in parts[i + 1]:
+                    # 按双 CRLF 分割获取 JSON 部分
+                    segments = parts[i + 1].split(b"\r\n\r\n", 1)
+                    if len(segments) == 2:
+                        json_part = segments[1]
+                        modified = modify_json_data(json_part, modifications)
+                        if modified:
+                            parts[i + 1] = segments[0] + b"\r\n\r\n" + modified
+        return b''.join(parts)
+    else:
+        modified = modify_json_data(frame_data, modifications)
+        return modified if modified else frame_data
 
-def process_packet(pkt, modifications, seq_diff, ip_replacements, target_lengths, packet_index):
+def process_packet(pkt, modifications, seq_diff, ip_replacements):
     """
     对 TCP 包内部的 HTTP/2 数据帧进行处理：
     1. 解析所有 HTTP/2 帧，对 DATA 帧进行 JSON 数据修改。
     2. 修改五元组 IP 地址对。
-    3. 修改指定的 content-length。
+    3. 追加未解析的剩余数据，防止丢失。
     4. 根据包内负载变化计算偏移量，累加调整 TCP 序号。
     5. 删除校验和字段，让 Scapy 自动重新生成。
     """
@@ -93,12 +121,16 @@ def process_packet(pkt, modifications, seq_diff, ip_replacements, target_lengths
             if frame_header is None:
                 break
 
-            # 修改 content-length 字段
-            modify_content_length(packet_index, frame_header, target_lengths)
+            # 添加调试信息：打印 Content-Length 值
+            if frame_data and b"Content-Length" in frame_data:
+                match = re.search(b"Content-Length: (\d+)", frame_data)
+                if match:
+                    content_length_value = match.group(1).decode('utf-8')
+                    print(f"[调试] Content-Length: {content_length_value}")
 
             # 处理 DATA 帧（类型为 0x0）
             if frame_type == 0x0:
-                modified_frame_data = process_http2_data_frame(frame_data, target_lengths.get(packet_index, frame_len))
+                modified_frame_data = process_http2_data_frame(frame_data, modifications)
                 if modified_frame_data:
                     frame_len = len(modified_frame_data)
                     frame_header.length = frame_len
@@ -139,7 +171,7 @@ def process_packet(pkt, modifications, seq_diff, ip_replacements, target_lengths
 
 # ---------------------- 主处理流程 ----------------------
 PCAP_IN = "pcap/N16_create_16p.pcap"   # 输入 PCAP 文件路径
-PCAP_OUT = "pcap/N16_modified136.pcap"   # 输出 PCAP 文件路径
+PCAP_OUT = "pcap/N16_modified127.pcap"   # 输出 PCAP 文件路径
 
 # JSON 字段修改内容
 MODIFICATIONS = {
@@ -159,13 +191,6 @@ IP_REPLACEMENTS = {
     "200.20.20.25": "40.0.0.1"
 }
 
-# 指定的 content-length 修改目标
-TARGET_LENGTHS = {
-    11: 375,
-    13: 771,
-    15: 379
-}
-
 print(f"开始处理文件 {PCAP_IN}")
 packets = rdpcap(PCAP_IN)
 modified_packets = []
@@ -173,9 +198,9 @@ modified_packets = []
 # 保存每个流累计的 TCP 序号偏移量
 seq_diff = {}
 
-for index, pkt in enumerate(packets, start=1):
+for pkt in packets:
     if TCP in pkt or Raw in pkt:
-        process_packet(pkt, MODIFICATIONS, seq_diff, IP_REPLACEMENTS, TARGET_LENGTHS, index)
+        process_packet(pkt, MODIFICATIONS, seq_diff, IP_REPLACEMENTS)
     modified_packets.append(pkt)
 
 print(f"保存修改后的 PCAP 到 {PCAP_OUT}")
