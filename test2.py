@@ -87,13 +87,15 @@ def process_http2_data_frame(frame_data, modifications):
         modified = modify_json_data(frame_data, modifications)
         return modified if modified else frame_data
 
-
 def process_packet(pkt, modifications, seq_diff, ip_replacements, packet_number):
     """
-    对 TCP 包内部的 HTTP/2 数据帧进行处理，增加调试信息打印
+    对 TCP 包内部的 HTTP/2 数据帧进行处理：
+    1. 解析所有 HTTP/2 帧，对 DATA 帧进行 JSON 数据修改。
+    2. 修改五元组 IP 地址对。
+    3. 追加未解析的剩余数据，防止丢失。
+    4. 根据包内负载变化计算偏移量，累加调整 TCP 序号。
+    5. 删除校验和字段，让 Scapy 自动重新生成。
     """
-    print(f"\n[调试] 正在处理第 {packet_number} 个数据包")  # 新增调试信息
-
     if pkt.haslayer(IP):
         # 修改五元组 IP 地址对
         if pkt[IP].src in ip_replacements:
@@ -104,47 +106,36 @@ def process_packet(pkt, modifications, seq_diff, ip_replacements, packet_number)
             pkt[IP].dst = ip_replacements[pkt[IP].dst]
 
     if pkt.haslayer(TCP) and pkt.haslayer(Raw):
-        print(f"[调试] 数据包 {packet_number} 包含 TCP 和 Raw 层")  # 新增调试信息
         raw = bytes(pkt[Raw].load)
-        print(f"[调试] Raw 数据长度: {len(raw)} 字节")  # 新增调试信息
         offset = 0
         new_payload = b''
+        content_length_found = False
 
         while offset < len(raw):
+            # 如果剩余数据不足 9 个字节，则直接追加剩余数据
             if offset + 9 > len(raw):
-                print(f"[调试] 数据包 {packet_number}: 剩余数据不足9字节，追加剩余数据")  # 新增调试信息
                 new_payload += raw[offset:]
                 offset = len(raw)
                 break
 
             frame_header, frame_len, frame_type, frame_data, frame_end = process_http2_frame_header(raw, offset)
             if frame_header is None:
-                print(f"[调试] 数据包 {packet_number}: 帧头解析失败")  # 新增调试信息
                 break
 
-            # 为特定包号(11,13,15)检查并打印Content-Length值
-            # 为特定包号(11,13,15)检查并打印Content-Length值
-            if packet_number in [11, 13, 15]:
-                print(f"[调试] 检查数据包 {packet_number} 的 Content-Length")
-                if frame_data:
-                    print(f"[调试] 数据包 {packet_number} 帧数据长度: {len(frame_data)} 字节")
-                    try:
-                        frame_data_str = frame_data.decode('utf-8', errors='ignore')
-                        print(f"[调试] 帧数据前100字节: {frame_data_str[:100]}")
-                    except Exception as e:
-                        print(f"[调试] 帧数据解码失败: {str(e)}")
+            # 添加调试信息：打印 Content-Length 值
+            if frame_data and b"Content-Length" in frame_data and not content_length_found:
+                match = re.search(b"Content-Length: ([0-9]+)", frame_data)
+                if match:
+                    content_length_value = match.group(1).decode('utf-8')
+                    print(f"[调试] Content-Length: {content_length_value}")
 
-                    # 修复正则表达式中的转义序列
-                    match = re.search(br"content-length: *(\d+)", frame_data.lower())
-                    if match:
-                        content_length_value = match.group(1).decode('utf-8')
-                        print(f"[包号 {packet_number}] Content-Length: {content_length_value}")
-                    else:
-                        print(f"[调试] 数据包 {packet_number} 未找到 Content-Length")
+                    # 打印指定报文的 Content-Length
+                    if packet_number in [11, 13, 15]:
+                        print(f"[+] 报文 #{packet_number} Content-Length: {content_length_value}")
+                    content_length_found = True  # 确保只打印第一个 Content-Length
 
             # 处理 DATA 帧（类型为 0x0）
             if frame_type == 0x0:
-                print(f"[调试] 数据包 {packet_number}: 处理 DATA 帧")  # 新增调试信息
                 modified_frame_data = process_http2_data_frame(frame_data, modifications)
                 if modified_frame_data:
                     frame_len = len(modified_frame_data)
@@ -161,7 +152,6 @@ def process_packet(pkt, modifications, seq_diff, ip_replacements, packet_number)
         original_length = len(raw)
         new_length = len(new_payload)
         diff = new_length - original_length
-        print(f"[调试] 数据包 {packet_number}: 原始长度={original_length}, 新长度={new_length}, 差值={diff}")  # 新增调试信息
 
         flow = (pkt[IP].src, pkt[IP].dst, pkt[TCP].sport, pkt[TCP].dport)
         if flow not in seq_diff:
@@ -185,10 +175,9 @@ def process_packet(pkt, modifications, seq_diff, ip_replacements, packet_number)
         pkt.wirelen = len(pkt)  # 捕获到的帧总长度
         pkt.caplen = pkt.wirelen  # 捕获到的有效数据长度
 
-
 # ---------------------- 主处理流程 ----------------------
-PCAP_IN = "pcap/N16_create_16p.pcap"  # 输入 PCAP 文件路径
-PCAP_OUT = "pcap/N16_modified116.pcap"  # 输出 PCAP 文件路径
+PCAP_IN = "pcap/N16_create_16p.pcap"   # 输入 PCAP 文件路径
+PCAP_OUT = "pcap/N16_modified127.pcap"   # 输出 PCAP 文件路径
 
 # JSON 字段修改内容
 MODIFICATIONS = {
@@ -201,7 +190,7 @@ MODIFICATIONS = {
     "nrCellId": "010000001",
     "uplink": "5000000000",
     "downlink": "5000000000",
-    "ismfPduSessionUri": "http://200.20.20.26:80/nsmf-pdusession/v1/pdu-sessions/10000001"  # Updated ID
+    "ismfPduSessionUri": "http://200.20.20.26:8080/nsmf-pdusession/v1/pdu-sessions/10000001"  # Updated ID
 }
 
 # 五元组 IP 替换内容
@@ -212,21 +201,16 @@ IP_REPLACEMENTS = {
 
 print(f"开始处理文件 {PCAP_IN}")
 packets = rdpcap(PCAP_IN)
-print(f"[调试] 读取到 {len(packets)} 个数据包")  # 新增调试信息
 modified_packets = []
 
 # 保存每个流累计的 TCP 序号偏移量
 seq_diff = {}
 
-for i, pkt in enumerate(packets, 1):
+for i, pkt in enumerate(packets):
+    packet_number = i + 1  # 报文编号从 1 开始
     if TCP in pkt or Raw in pkt:
-        print(f"\n[调试] ====== 开始处理第 {i} 个数据包 ======")  # 新增调试信息
-        process_packet(pkt, MODIFICATIONS, seq_diff, IP_REPLACEMENTS, i)
-        print(f"[调试] ====== 完成处理第 {i} 个数据包 ======")  # 新增调试信息
-    else:
-        print(f"[调试] 跳过数据包 {i} (不包含 TCP 或 Raw 层)")  # 新增调试信息
+        process_packet(pkt, MODIFICATIONS, seq_diff, IP_REPLACEMENTS, packet_number)
     modified_packets.append(pkt)
 
 print(f"保存修改后的 PCAP 到 {PCAP_OUT}")
 wrpcap(PCAP_OUT, modified_packets)
-print("[调试] 脚本执行完成")  # 新增调试信息
