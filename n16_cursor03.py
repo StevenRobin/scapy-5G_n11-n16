@@ -111,10 +111,92 @@ def process_http2_data_frame(frame_data, modifications):
 def process_http2_headers_frame(frame_data, packet_idx, context_num, data_length=None):
     """处理 HTTP/2 HEADERS 帧，根据报文索引修改特定字段"""
     try:
+        # 直接二进制搜索替换方法（用于无法解析的特殊格式头部）
+        def binary_replace(data, search_pattern, replace_pattern):
+            if search_pattern in data:
+                print(f"[二进制替换] 找到模式: {search_pattern}")
+                return data.replace(search_pattern, replace_pattern)
+            return None
+            
+        # 第13号报文特殊处理 - 根据Wireshark显示内容直接替换
+        if packet_idx == 13:
+            print(f"[特殊处理] 第13个报文使用二进制匹配替换方法")
+            
+            # 尝试查找并替换"authority: 200.20.20.25:8080"
+            # 实际编码可能因为HTTP/2头部压缩而不同，尝试几种可能的模式
+            possible_patterns = [
+                b'200.20.20.25:8080', 
+                b'200.20.20.25',
+                bytes([0x32, 0x30, 0x30, 0x2e, 0x32, 0x30, 0x2e, 0x32, 0x30, 0x2e, 0x32, 0x35])  # "200.20.20.25" 的ASCII
+            ]
+            
+            replacement = b'smf.smf'
+            
+            for pattern in possible_patterns:
+                modified = binary_replace(frame_data, pattern, replacement)
+                if modified:
+                    print(f"[成功] 将'{pattern}'替换为'{replacement}'")
+                    frame_data = modified
+                    break
+                    
+            # 如果有需要，也可以增加对path字段的保护，防止被错误修改
+            return frame_data
+            
+        # 第15号报文特殊处理 - 根据Wireshark显示内容直接替换
+        if packet_idx == 15:
+            print(f"[特殊处理] 第15个报文使用二进制匹配替换方法")
+            
+            # 尝试找到location字段
+            possible_patterns = [
+                b'location:', 
+                b'Location:'
+            ]
+            
+            # 查找location字段后面的URI
+            for pattern in possible_patterns:
+                loc_pos = frame_data.find(pattern)
+                if loc_pos >= 0:
+                    print(f"[找到] location字段位置: {loc_pos}")
+                    # 尝试查找URI部分并替换
+                    value_start = loc_pos + len(pattern)
+                    
+                    # 构建新的location值
+                    authority = "smf.smf"
+                    new_location = f"http://{authority}/nsmf-pdusession/v1/pdu-sessions/{context_num}"
+                    new_location_bytes = new_location.encode()
+                    
+                    # 找到原始URI的结束位置（通常是下一个头字段开始）
+                    next_header = frame_data.find(b':', value_start + 1)
+                    if next_header < 0:
+                        next_header = len(frame_data)
+                    
+                    # 替换整个URI
+                    new_frame_data = frame_data[:value_start] + b' ' + new_location_bytes + frame_data[next_header:]
+                    print(f"[修改] 设置location为: {new_location}")
+                    return new_frame_data
+            
         # 确保所有HTTP/2头部都能被解析
         decoder = Decoder()
         encoder = Encoder()
-        headers = decoder.decode(frame_data)
+        
+        # 添加更详细的日志
+        if packet_idx in [13, 15]:
+            print(f"[DEBUG详细] 第{packet_idx}个报文的HEADERS帧数据长度: {len(frame_data)}")
+            print(f"[DEBUG详细] 第{packet_idx}个报文的HEADERS帧数据前20字节: {frame_data[:20].hex()}")
+            
+        try:
+            headers = decoder.decode(frame_data)
+             
+            # 特殊处理特定报文
+            if packet_idx in [13, 15]:
+                print(f"[DEBUG详细] 第{packet_idx}个报文的HEADERS解析成功，共{len(headers)}个头部字段")
+                for idx, (name, value) in enumerate(headers):
+                    print(f"[DEBUG详细] 第{packet_idx}个报文头部 #{idx}: {name} = {value}")
+                     
+        except Exception as decode_error:
+            print(f"[错误] 解析第{packet_idx}个报文HEADERS时出错: {str(decode_error)}")
+            return frame_data
+             
         modified = False
         new_headers = []
         
@@ -240,6 +322,9 @@ def process_packet(pkt, modifications, seq_diff, ip_replacements, context_num, p
     5. 根据包内负载变化计算偏移量，累加调整 TCP 序号。
     6. 删除校验和字段，让 Scapy 自动重新生成。
     """
+    # 添加调试信息
+    print(f"[DEBUG] 处理报文 #{packet_idx}")
+    
     if pkt.haslayer(IP):
         # 修改五元组 IP 地址对
         if pkt[IP].src in ip_replacements:
@@ -309,6 +394,8 @@ def process_packet(pkt, modifications, seq_diff, ip_replacements, context_num, p
                     break
 
                 if frame_type == 0x1:  # HEADERS帧
+                    # 添加调试信息
+                    print(f"[DEBUG] 报文 #{packet_idx} 含有HEADERS帧")
                     # 只有当包中同时存在HEADERS和DATA帧时才设置content-length
                     current_json_length = json_length if has_data else None
                     modified_frame_data = process_http2_headers_frame(frame_data, packet_idx, context_num, current_json_length)
@@ -410,7 +497,7 @@ def generate_multiple_pcaps(original_info, modifications_list, ip_replacements, 
 
 # ---------------------- 主处理流程 ----------------------
 PCAP_IN = "pcap/N16_create_16p.pcap"   # 输入 PCAP 文件路径
-PCAP_OUT = "pcap/N16_171.pcap"   # 输出 PCAP 文件路径
+PCAP_OUT = "pcap/N16_177.pcap"   # 输出 PCAP 文件路径
 
 # JSON 字段修改内容
 MODIFICATIONS = {
@@ -453,9 +540,16 @@ def main():
                 serializable_info.append({'is_tcp_ip': False})
                 continue
                 
-            # 移除无法序列化的payload和http2_frames字段
-            serializable_item = {k: v for k, v in info.items() 
-                              if k not in ['payload', 'http2_frames', 'original_pkt']}
+            # 移除无法序列化的payload和http2_frames字段，并将FlagValue转换为整数
+            serializable_item = {}
+            for k, v in info.items():
+                if k not in ['payload', 'http2_frames', 'original_pkt']:
+                    # 特殊处理TCP flags，将FlagValue转换为整数
+                    if k == 'flags':
+                        serializable_item[k] = int(v)
+                    else:
+                        serializable_item[k] = v
+            
             serializable_info.append(serializable_item)
             
         json.dump(serializable_info, f, indent=2)
