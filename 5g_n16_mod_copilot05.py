@@ -164,7 +164,7 @@ def process_packet(pkt, modifications, seq_diff, ip_replacements):
 
 # ---------------------- 主处理流程 ----------------------
 PCAP_IN = "pcap/N16_create_16p.pcap"   # 输入 PCAP 文件路径
-PCAP_OUT = "pcap/N16_modified130.pcap"   # 输出 PCAP 文件路径
+PCAP_OUT = "pcap/N16_1201.pcap"   # 输出 PCAP 文件路径
 
 # JSON 字段修改内容
 MODIFICATIONS = {
