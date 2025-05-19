@@ -14,7 +14,7 @@ TARGET_FIELDS = {
 ORIGINAL_IMSI = "imsi-460030100000000"
 MODIFIED_IMSI = "imsi-460030100000022"
 PCAP_IN = "pcap/N11_create_50p.pcap"
-PCAP_OUT = "pcap/N11_104.pcap"
+PCAP_OUT = "pcap/N11_105.pcap"
 
 # 新增参数：匹配第49个报文的path前缀和后缀
 MODIFY_PATH_PREFIX = "/nsmf-pdusession/v1/sm-contexts/"
@@ -81,16 +81,35 @@ def modify_json_data(payload, fields):
         print(f"JSON处理错误: {str(e)}")
         return None
 
-def process_http2_headers_frame(frame_data, original_imsi, modified_imsi, modify_path_only=False):
+# 修改process_http2_headers_frame函数，添加pkt_index参数来识别第46个报文
+def process_http2_headers_frame(frame_data, original_imsi, modified_imsi, modify_path_only=False, pkt_index=None):
     """
     处理HTTP/2 HEADERS帧
     modify_path_only: True时，仅对匹配指定path的包做imsi的替换
+    pkt_index: 当前包的索引，用于特殊处理第46个报文
     """
     try:
         decoder = Decoder()
         headers = decoder.decode(frame_data)
         new_headers = []
         modified = False
+        
+        # 特殊处理第46个报文 (索引为45)
+        if pkt_index == 45:
+            for name, value in headers:
+                if name.lower() == "location":
+                    print(f"[*] 第46个报文的location字段: {value}")
+                    # 保存提取的supi值（如果需要后续使用）
+                    if value.startswith("http://123.1.1.10/nsmf-pdusession/v1/sm-contexts/"):
+                        parts = value.split("-5")
+                        if parts and len(parts) > 0:
+                            extracted_supi = parts[0].split("/sm-contexts/")[1]
+                            print(f"[*] 提取的supi值: {extracted_supi}")
+                            # 可以将提取的supi保存为全局变量，以便在处理第49个报文时使用
+                            global EXTRACTED_SUPI
+                            EXTRACTED_SUPI = extracted_supi
+        
+        # 原有处理逻辑
         for name, value in headers:
             # 针对path字段: 只改第49包的 /nsmf-pdusession/v1/sm-contexts/imsi-...-5/modify
             if modify_path_only and name.lower() == ":path":
@@ -206,7 +225,9 @@ def process_packet(pkt, seq_diff, modifications, original_imsi, modified_imsi, p
                 # 普通模式
                 if frame_type == 0x1:
                     modified_frame_data = process_http2_headers_frame(
-                        frame_data, original_imsi, modified_imsi, modify_path_only=False
+                        frame_data, original_imsi, modified_imsi, 
+                        modify_path_only=(pkt_index == 48), # 第49个包特殊处理
+                        pkt_index=pkt_index
                     )
                     if modified_frame_data:
                         frame_len = len(modified_frame_data)
@@ -249,6 +270,9 @@ def process_packet(pkt, seq_diff, modifications, original_imsi, modified_imsi, p
         pkt.wirelen = len(pkt)
         pkt.caplen = pkt.wirelen
 
+# 在文件开头添加全局变量
+EXTRACTED_SUPI = None
+
 print(f"开始处理文件 {PCAP_IN}")
 packets = rdpcap(PCAP_IN)
 modified_packets = []
@@ -259,6 +283,12 @@ for idx, pkt in enumerate(packets):
     if TCP in pkt:
         process_packet(pkt, seq_diff, TARGET_FIELDS, ORIGINAL_IMSI, MODIFIED_IMSI, pkt_index=idx)
     modified_packets.append(pkt)
+
+# 检查是否成功提取了第46个报文的location字段
+if EXTRACTED_SUPI:
+    print(f"成功提取第46个报文的supi值: {EXTRACTED_SUPI}")
+else:
+    print("未能提取第46个报文的supi值")
 
 print(f"保存修改到 {PCAP_OUT}")
 wrpcap(PCAP_OUT, modified_packets)
