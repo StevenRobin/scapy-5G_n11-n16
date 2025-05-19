@@ -410,7 +410,7 @@ def generate_multiple_pcaps(original_info, modifications_list, ip_replacements, 
 
 # ---------------------- 主处理流程 ----------------------
 PCAP_IN = "pcap/N16_create_16p.pcap"   # 输入 PCAP 文件路径
-PCAP_OUT = "pcap/N16_171.pcap"   # 输出 PCAP 文件路径
+PCAP_OUT = "pcap/N16_0519004.pcap"   # 输出 PCAP 文件路径
 
 # JSON 字段修改内容
 MODIFICATIONS = {
@@ -452,12 +452,16 @@ def main():
                 # 非TCP/IP包无法直接序列化，记录类型信息
                 serializable_info.append({'is_tcp_ip': False})
                 continue
-                
             # 移除无法序列化的payload和http2_frames字段
             serializable_item = {k: v for k, v in info.items() 
                               if k not in ['payload', 'http2_frames', 'original_pkt']}
+            # 修复flags字段的序列化问题
+            if 'flags' in serializable_item:
+                try:
+                    serializable_item['flags'] = int(serializable_item['flags'])
+                except Exception:
+                    serializable_item['flags'] = str(serializable_item['flags'])
             serializable_info.append(serializable_item)
-            
         json.dump(serializable_info, f, indent=2)
         print("已保存可序列化的报文信息到 original_packet_info.json")
 
@@ -479,4 +483,4 @@ def main():
     #                         base_context_num, "pcap/N16_batch_{}.pcap")
 
 if __name__ == "__main__":
-    main() 
+    main()

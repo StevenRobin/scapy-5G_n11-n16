@@ -196,7 +196,7 @@ def process_packet(pkt, seq_diff, ip_replacements, modifications):
 
 # --- 主处理流程 ---
 PCAP_IN = "pcap/N16_create_16p.pcap"
-PCAP_OUT = "pcap/N16_148.pcap"
+PCAP_OUT = "pcap/N16_0519003.pcap"
 
 MODIFICATIONS = {
     "supi": "imsi-460012300000001",

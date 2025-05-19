@@ -14,7 +14,7 @@ TARGET_FIELDS = {
 ORIGINAL_IMSI = "imsi-460030100000000"
 MODIFIED_IMSI = "imsi-460030100000022"
 PCAP_IN = "pcap/N11_create_50p.pcap"
-PCAP_OUT = "pcap/N11_106.pcap"
+PCAP_OUT = "pcap/N11_108.pcap"
 
 # 新增参数：匹配第49个报文的path前缀和后缀
 MODIFY_PATH_PREFIX = "/nsmf-pdusession/v1/sm-contexts/"
@@ -84,81 +84,104 @@ def modify_json_data(payload, fields):
         print(f"JSON处理错误: {str(e)}")
         return None
 
-# 修改process_http2_headers_frame函数，添加pkt_index参数来识别第46个报文
+# 修改process_http2_headers_frame函数，增加更健壮的异常处理
 def process_http2_headers_frame(frame_data, original_imsi, modified_imsi, modify_path_only=False, pkt_index=None):
     """
     处理HTTP/2 HEADERS帧
     modify_path_only: True时，仅对匹配指定path的包做imsi的替换
     pkt_index: 当前包的索引，用于特殊处理第46个报文
     """
+    global EXTRACTED_SUPI  # 移到函数开头
+    
     try:
         decoder = Decoder()
-        headers = decoder.decode(frame_data)
+        try:
+            headers = decoder.decode(frame_data)
+        except Exception as e:
+            print(f"[警告] 第{pkt_index+1}个报文头部解码失败: {e}")
+            # 特殊处理第49个报文的path字段 - 直接二进制替换而不使用hpack
+            if pkt_index == 48:  # 第49个报文
+                print("[尝试] 对第49个报文使用二进制替换方法")
+                # 查找path字段中的SUPI
+                pattern = b'/nsmf-pdusession/v1/sm-contexts/imsi-[0-9]+-5/modify'
+                match = re.search(pattern, frame_data)
+                if match:
+                    old_path = match.group(0)
+                    print(f"[找到] 原始path: {old_path}")
+                    # 准备替换值
+                    supi_to_use = EXTRACTED_SUPI.encode() if EXTRACTED_SUPI else MODIFIED_IMSI.encode()
+                    # 找出旧SUPI
+                    supi_pattern = b'imsi-[0-9]+'
+                    supi_match = re.search(supi_pattern, old_path)
+                    if supi_match:
+                        old_supi = supi_match.group(0)
+                        print(f"[替换] {old_supi} -> {supi_to_use}")
+                        new_path = old_path.replace(old_supi, supi_to_use)
+                        new_frame_data = frame_data.replace(old_path, new_path)
+                        return new_frame_data
+            return frame_data
+            
         new_headers = []
         modified = False
         
-        # 特殊处理第46个报文 (索引为45)
+        # 处理第46个报文 (索引为45) - 提取location中的SUPI
         if pkt_index == 45:
+            print(f"[DEBUG] 正在处理第46个报文，包含 {len(headers)} 个头部字段")
             for name, value in headers:
+                print(f"[DEBUG] 头部字段: {name} = {value}")
                 if name.lower() == "location":
                     print(f"[*] 第46个报文的location字段: {value}")
-                    # 保存提取的supi值（如果需要后续使用）
-                    if value.startswith("http://123.1.1.10/nsmf-pdusession/v1/sm-contexts/"):
-                        parts = value.split("-5")
-                        if parts and len(parts) > 0:
-                            extracted_supi = parts[0].split("/sm-contexts/")[1]
-                            print(f"[*] 提取的supi值: {extracted_supi}")
-                            # 可以将提取的supi保存为全局变量，以便在处理第49个报文时使用
-                            global EXTRACTED_SUPI
-                            EXTRACTED_SUPI = extracted_supi
+                    if "/nsmf-pdusession/v1/sm-contexts/" in value:
+                        context_part = value.split("/sm-contexts/")[1]
+                        if "-5" in context_part:
+                            extracted_supi = context_part.split("-5")[0]
+                        else:
+                            extracted_supi = context_part
+                        print(f"[*] 提取的supi值: {extracted_supi}")
+                        EXTRACTED_SUPI = extracted_supi  # 删除这里的global声明
         
-        # 原有处理逻辑
-        for name, value in headers:
-            # 针对path字段: 只改第49包的 /nsmf-pdusession/v1/sm-contexts/imsi-...-5/modify
-            if modify_path_only and name.lower() == ":path":
-                if value.startswith(MODIFY_PATH_PREFIX) and value.endswith(MODIFY_PATH_SUFFIX):
-                    mid = value[len(MODIFY_PATH_PREFIX):-len(MODIFY_PATH_SUFFIX)]
-                    if mid.startswith("imsi-"):
-                        # 使用从第46个报文提取的supi（如果有）
-                        supi_to_use = EXTRACTED_SUPI if EXTRACTED_SUPI else MODIFIED_IMSI
-                        new_value = MODIFY_PATH_PREFIX + supi_to_use + MODIFY_PATH_SUFFIX
-                        print(f"[+] 修改第49包 :path 字段: {value} -> {new_value}")
-                        new_headers.append((name, new_value))
-                        modified = True
-                    else:
-                        new_headers.append((name, value))
-                else:
-                    new_headers.append((name, value))
-            # 原有功能: 修改其它imsi路径
-            elif not modify_path_only and name.lower() == ":path" and original_imsi in value:
-                new_value = value.replace(original_imsi, modified_imsi)
-                print(f"[+] 修改URL路径: {value} -> {new_value}")
-                new_headers.append((name, new_value))
-                modified = True
-            # location字段imsi替换，不改pduSessionId
-            elif not modify_path_only and name.lower() == "location":
-                LOCATION_HEADER_PREFIX = "http://123.1.1.10/nsmf-pdusession/v1/sm-contexts/"
-                LOCATION_HEADER_SUFFIX = "-5"
-                if value.startswith(LOCATION_HEADER_PREFIX) and value.endswith(LOCATION_HEADER_SUFFIX):
-                    mid = value[len(LOCATION_HEADER_PREFIX):-len(LOCATION_HEADER_SUFFIX)]
-                    if mid.startswith("imsi-"):
-                        new_value = LOCATION_HEADER_PREFIX + MODIFIED_IMSI + LOCATION_HEADER_SUFFIX
-                        print(f"[+] 修改Location字段: {value} -> {new_value}")
-                        new_headers.append((name, new_value))
-                        modified = True
-                    else:
-                        new_headers.append((name, value))
-                else:
-                    new_headers.append((name, value))
+        # 处理第49个报文 (索引为48) - 使用提取的SUPI替换path
+        if pkt_index == 48:
+            print(f"[DEBUG] 处理第49个报文，EXTRACTED_SUPI={EXTRACTED_SUPI}")
+            for name, value in headers:
+                if name.lower() == ":path":
+                    if value.startswith(MODIFY_PATH_PREFIX) and value.endswith(MODIFY_PATH_SUFFIX):
+                        mid = value[len(MODIFY_PATH_PREFIX):-len(MODIFY_PATH_SUFFIX)]
+                        if "imsi-" in mid:
+                            supi_to_use = EXTRACTED_SUPI if EXTRACTED_SUPI else MODIFIED_IMSI
+                            new_value = MODIFY_PATH_PREFIX + supi_to_use + MODIFY_PATH_SUFFIX
+                            print(f"[+] 修改第49包 :path: {value} -> {new_value}")
+                            new_headers.append((name, new_value))
+                            modified = True
+                            continue
+                new_headers.append((name, value))
             else:
                 new_headers.append((name, value))
-        if modified:
-            encoder = Encoder()
-            new_data = encoder.encode(new_headers)
-            return new_data
+                
+            if modified:
+                try:
+                    encoder = Encoder()
+                    new_data = encoder.encode(new_headers)
+                    return new_data
+                except Exception as e:
+                    print(f"[错误] 编码第49个报文头部失败: {e}")
+                    # 尝试二进制替换
+                    pattern = b'/nsmf-pdusession/v1/sm-contexts/imsi-[0-9]+-5/modify'
+                    match = re.search(pattern, frame_data)
+                    if match:
+                        old_path = match.group(0)
+                        supi_to_use = EXTRACTED_SUPI.encode() if EXTRACTED_SUPI else MODIFIED_IMSI.encode()
+                        supi_pattern = b'imsi-[0-9]+'
+                        supi_match = re.search(supi_pattern, old_path)
+                        if supi_match:
+                            old_supi = supi_match.group(0)
+                            new_path = old_path.replace(old_supi, supi_to_use)
+                            return frame_data.replace(old_path, new_path)
+        
         return frame_data
     except Exception as e:
-        print(f"HEADERS帧处理错误: {str(e)}")
+        print(f"[错误] 处理HTTP/2头部帧异常: {e}")
+        # 即使出错也要继续执行，不中断流程
         return frame_data
 
 def process_http2_data_frame(frame_data, fields):
@@ -231,7 +254,7 @@ def process_packet(pkt, seq_diff, modifications, original_imsi, modified_imsi, p
                 if frame_type == 0x1:
                     modified_frame_data = process_http2_headers_frame(
                         frame_data, original_imsi, modified_imsi, 
-                        modify_path_only=(pkt_index == 48), # 第49个包特殊处理
+                        modify_path_only=(pkt_index == 48), # 第49个报文特殊处理
                         pkt_index=pkt_index
                     )
                     if modified_frame_data:

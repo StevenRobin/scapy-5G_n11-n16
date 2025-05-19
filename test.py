@@ -1,11 +1,32 @@
 from scapy.all import *
 from scapy.packet import Packet
 from scapy.fields import BitField, ByteField
-from hpack import Decoder, Encoder
+from hpack import Encoder, Decoder
 import json
 import re
 
-# 自定义 HTTP/2 帧头解析
+# 配置参数
+TARGET_FIELDS = {
+    "supi": "imsi-460030100000022",
+    "pei": "imeisv-1031014000012222",
+    "gpsi": "msisdn-15910012222"
+}
+ORIGINAL_IMSI = "imsi-460030100000000"
+MODIFIED_IMSI = "imsi-460030100000022"
+PCAP_IN = "pcap/N11_create_50p.pcap"
+PCAP_OUT = "pcap/N11_1202.pcap"
+
+# 新增参数：IP地址修改配置
+SRC_IP_ORIGINAL = "192.168.1.100"  # 替换为原始源IP
+SRC_IP_NEW = "192.168.1.200"       # 替换为新的源IP
+DST_IP_ORIGINAL = "192.168.1.101"  # 替换为原始目标IP
+DST_IP_NEW = "192.168.1.201"       # 替换为新的目标IP
+
+# 新增参数：匹配第49个报文的path前缀和后缀
+MODIFY_PATH_PREFIX = "/nsmf-pdusession/v1/sm-contexts/"
+MODIFY_PATH_SUFFIX = "-5/modify"
+
+# 自定义HTTP/2帧头解析
 class HTTP2FrameHeader(Packet):
     name = "HTTP2FrameHeader"
     fields_desc = [
@@ -17,14 +38,13 @@ class HTTP2FrameHeader(Packet):
     ]
 
 def process_http2_frame_header(raw, offset):
-    """解析 HTTP/2 帧头部，并防止对超出数据范围的读取"""
+    """解析HTTP/2帧头部"""
     try:
         if offset + 9 > len(raw):
             return None, None, None, None, len(raw)
         frame_header = HTTP2FrameHeader(raw[offset:offset + 9])
         frame_len = frame_header.length
         frame_type = frame_header.type
-        # 当帧体长度超过剩余捕获数据时，使用剩余长度
         frame_end = offset + 9 + frame_len
         if frame_end > len(raw):
             print("[警告] 帧长度超过捕获长度，调整为剩余数据长度")
@@ -37,127 +57,209 @@ def process_http2_frame_header(raw, offset):
         print(f"帧解析错误: {str(e)}")
         return None, None, None, None, len(raw)
 
-def modify_json_data(payload, modifications):
-    """修改 JSON 数据中的目标字段"""
+def modify_json_data(payload, fields):
+    """修改JSON数据中的目标字段"""
     try:
-        # 跳过空数据段
         if not payload.strip():
             print("[跳过空数据段]")
             return None
         data = json.loads(payload)
         modified = False
-
         def recursive_modify(obj, modifications):
-            """递归修改嵌套 JSON 对象"""
             nonlocal modified
             if isinstance(obj, dict):
                 for key, value in obj.items():
-                    if key in modifications:
-                        print(f"[+] 修改 JSON 字段 {key}: {value} -> {modifications[key]}")
-                        obj[key] = modifications[key]
-                        modified = True
-                    elif isinstance(value, (dict, list)):
+                    lkey = key.lower()
+                    for target in modifications:
+                        if target.lower() == lkey:
+                            print(f"[+] 修改JSON字段 {key} ({value}) -> {modifications[target]}")
+                            obj[key] = modifications[target]
+                            modified = True
+                    if isinstance(value, (dict, list)):
                         recursive_modify(value, modifications)
             elif isinstance(obj, list):
                 for item in obj:
                     if isinstance(item, (dict, list)):
                         recursive_modify(item, modifications)
-        recursive_modify(data, modifications)
-        return json.dumps(data, indent=None).encode() if modified else None
+        recursive_modify(data, fields)
+        return json.dumps(data, separators=(',', ':')).encode() if modified else None
     except Exception as e:
         print(f"JSON处理错误: {str(e)}")
         return None
 
-def process_http2_data_frame(frame_data, modifications):
-    """处理 HTTP/2 DATA 帧中的多部分数据"""
+# 修改process_http2_headers_frame函数，添加pkt_index参数来识别第46个报文
+def process_http2_headers_frame(frame_data, original_imsi, modified_imsi, modify_path_only=False, pkt_index=None):
+    """
+    处理HTTP/2 HEADERS帧
+    modify_path_only: True时，仅对匹配指定path的包做imsi的替换
+    pkt_index: 当前包的索引，用于特殊处理第46个报文
+    """
+    try:
+        decoder = Decoder()
+        headers = decoder.decode(frame_data)
+        new_headers = []
+        modified = False
+        
+        # 特殊处理第46个报文 (索引为45)
+        if pkt_index == 45:
+            for name, value in headers:
+                if name.lower() == "location":
+                    print(f"[*] 第46个报文的location字段: {value}")
+                    # 保存提取的supi值（如果需要后续使用）
+                    if value.startswith("http://123.1.1.10/nsmf-pdusession/v1/sm-contexts/"):
+                        parts = value.split("-5")
+                        if parts and len(parts) > 0:
+                            extracted_supi = parts[0].split("/sm-contexts/")[1]
+                            print(f"[*] 提取的supi值: {extracted_supi}")
+                            # 可以将提取的supi保存为全局变量，以便在处理第49个报文时使用
+                            global EXTRACTED_SUPI
+                            EXTRACTED_SUPI = extracted_supi
+        
+        # 原有处理逻辑
+        for name, value in headers:
+            # 统一处理第49包的 :path 字段
+            if pkt_index == 48 and name.lower() == ":path":
+                if value.startswith(MODIFY_PATH_PREFIX) and value.endswith(MODIFY_PATH_SUFFIX):
+                    import re
+                    m = re.match(r"(/nsmf-pdusession/v1/sm-contexts/)(imsi-\d+)(-5/modify)", value)
+                    if m:
+                        new_value = m.group(1) + MODIFIED_IMSI + m.group(3)
+                        print(f"[+] 精确替换第49包 :path 字段: {value} -> {new_value}")
+                        new_headers.append((name, new_value))
+                        modified = True
+                        continue
+                new_headers.append((name, value))
+                continue
+            # 其它包的:path处理
+            elif name.lower() == ":path" and original_imsi in value:
+                new_value = value.replace(original_imsi, modified_imsi)
+                print(f"[+] 修改URL路径: {value} -> {new_value}")
+                new_headers.append((name, new_value))
+                modified = True
+            # location字段imsi替换，不改pduSessionId
+            elif not modify_path_only and name.lower() == "location":
+                LOCATION_HEADER_PREFIX = "http://123.1.1.10/nsmf-pdusession/v1/sm-contexts/"
+                LOCATION_HEADER_SUFFIX = "-5"
+                if value.startswith(LOCATION_HEADER_PREFIX) and value.endswith(LOCATION_HEADER_SUFFIX):
+                    mid = value[len(LOCATION_HEADER_PREFIX):-len(LOCATION_HEADER_SUFFIX)]
+                    if mid.startswith("imsi-"):
+                        new_value = LOCATION_HEADER_PREFIX + MODIFIED_IMSI + LOCATION_HEADER_SUFFIX
+                        print(f"[+] 修改Location字段: {value} -> {new_value}")
+                        new_headers.append((name, new_value))
+                        modified = True
+                    else:
+                        new_headers.append((name, value))
+                else:
+                    new_headers.append((name, value))
+            else:
+                new_headers.append((name, value))
+        if modified:
+            encoder = Encoder()
+            new_data = encoder.encode(new_headers)
+            return new_data
+        return frame_data
+    except Exception as e:
+        print(f"HEADERS帧处理错误: {str(e)}")
+        return frame_data
+
+def process_http2_data_frame(frame_data, fields):
+    """处理HTTP/2 DATA帧中的多部分数据"""
     if b"--++Boundary" in frame_data:
         parts = re.split(br'(--\+\+Boundary)', frame_data)
         for i in range(len(parts)):
             if parts[i] == b"--++Boundary" and i + 1 < len(parts):
                 if b"Content-Type:application/json" in parts[i + 1]:
-                    # 按双 CRLF 分割获取 JSON 部分
                     segments = parts[i + 1].split(b"\r\n\r\n", 1)
                     if len(segments) == 2:
                         json_part = segments[1]
-                        modified = modify_json_data(json_part, modifications)
+                        modified = modify_json_data(json_part, fields)
                         if modified:
                             parts[i + 1] = segments[0] + b"\r\n\r\n" + modified
         return b''.join(parts)
     else:
-        modified = modify_json_data(frame_data, modifications)
+        modified = modify_json_data(frame_data, fields)
         return modified if modified else frame_data
 
-def process_packet(pkt, modifications, seq_diff, ip_replacements):
+def process_packet(pkt, seq_diff, modifications, original_imsi, modified_imsi, pkt_index=None):
     """
-    对 TCP 包内部的 HTTP/2 数据帧进行处理：
-    1. 解析所有 HTTP/2 帧，对 DATA 帧进行 JSON 数据修改。
-    2. 修改五元组 IP 地址对。
-    3. 追加未解析的剩余数据，防止丢失。
-    4. 根据包内负载变化计算偏移量，累加调整 TCP 序号。
-    5. 删除校验和字段，让 Scapy 自动重新生成。
+    处理每个数据包
+    pkt_index: 当前包索引（用于特殊处理第49报文）
     """
     if pkt.haslayer(IP):
-        # 修改五元组 IP 地址对
-        if pkt[IP].src in ip_replacements:
-            print(f"[+] 替换源IP {pkt[IP].src} -> {ip_replacements[pkt[IP].src]}")
-            pkt[IP].src = ip_replacements[pkt[IP].src]
-        if pkt[IP].dst in ip_replacements:
-            print(f"[+] 替换目的IP {pkt[IP].dst} -> {ip_replacements[pkt[IP].dst]}")
-            pkt[IP].dst = ip_replacements[pkt[IP].dst]
+        # 修改IP地址
+        if pkt[IP].src == SRC_IP_ORIGINAL:
+            print(f"[+] 修改源IP: {pkt[IP].src} -> {SRC_IP_NEW}")
+            pkt[IP].src = SRC_IP_NEW
+        if pkt[IP].dst == DST_IP_ORIGINAL:
+            print(f"[+] 修改目标IP: {pkt[IP].dst} -> {DST_IP_NEW}")
+            pkt[IP].dst = DST_IP_NEW
 
-    if pkt.haslayer(TCP) and pkt.haslayer(Raw):
-        raw = bytes(pkt[Raw].load)
-        offset = 0
-        new_payload = b''
-
-        while offset < len(raw):
-            # 如果剩余数据不足 9 个字节，则直接追加剩余数据
-            if offset + 9 > len(raw):
-                new_payload += raw[offset:]
-                offset = len(raw)
-                break
-
-            frame_header, frame_len, frame_type, frame_data, frame_end = process_http2_frame_header(raw, offset)
-            if frame_header is None:
-                break
-
-            # 添加调试信息：打印 Content-Length 值
-            if frame_data and b"Content-Length" in frame_data:
-                match = re.search(b"Content-Length: ([0-9]+)", frame_data)
-                if match:
-                    content_length_value = match.group(1).decode('utf-8')
-                    print(f"[调试] Content-Length: {content_length_value}")
-
-            # 处理 DATA 帧（类型为 0x0）
-            if frame_type == 0x0:
-                modified_frame_data = process_http2_data_frame(frame_data, modifications)
-                if modified_frame_data:
-                    frame_len = len(modified_frame_data)
-                    frame_header.length = frame_len
-                    new_payload += frame_header.build() + modified_frame_data
-                    offset = frame_end
-                    continue
-
-            # 保留未修改的帧
-            new_payload += raw[offset:frame_end]
-            offset = frame_end
-
-        # 若载荷被修改，则计算长度差
-        original_length = len(raw)
-        new_length = len(new_payload)
-        diff = new_length - original_length
-
+    if pkt.haslayer(TCP):
         flow = (pkt[IP].src, pkt[IP].dst, pkt[TCP].sport, pkt[TCP].dport)
+        rev_flow = (pkt[IP].dst, pkt[IP].src, pkt[TCP].dport, pkt[TCP].sport)
         if flow not in seq_diff:
             seq_diff[flow] = 0
-        # 调整数值：原始序号加上累计偏移量
-        pkt[TCP].seq = pkt[TCP].seq + seq_diff[flow]
-        # 更新累计偏移量
-        seq_diff[flow] += diff
+        if rev_flow not in seq_diff:
+            seq_diff[rev_flow] = 0
 
-        pkt[Raw].load = new_payload
+        flags = pkt[TCP].flags
+        is_syn = flags & 0x02 != 0
+        is_fin = flags & 0x01 != 0
+        is_rst = flags & 0x04 != 0
+        has_payload = pkt.haslayer(Raw) and len(pkt[Raw].load) > 0
 
-        # 删除校验和与长度字段，让 Scapy 自动重算
+        diff = 0
+        new_payload = None
+
+        if has_payload and not (is_syn or is_fin or is_rst):
+            raw = bytes(pkt[Raw].load)
+            offset = 0
+            new_payload = b''
+            while offset < len(raw):
+                if offset + 9 > len(raw):
+                    new_payload += raw[offset:]
+                    offset = len(raw)
+                    break
+                frame_header, frame_len, frame_type, frame_data, frame_end = process_http2_frame_header(raw, offset)
+                if frame_header is None:
+                    break
+                if frame_type == 0x1:
+                    modified_frame_data = process_http2_headers_frame(
+                        frame_data, original_imsi, modified_imsi,
+                        modify_path_only=False,  # 只用pkt_index判断
+                        pkt_index=pkt_index
+                    )
+                    if modified_frame_data:
+                        frame_len = len(modified_frame_data)
+                        frame_header.length = frame_len
+                        new_payload += frame_header.build() + modified_frame_data
+                        offset = frame_end
+                        continue
+                if frame_type == 0x0:
+                    modified_frame_data = process_http2_data_frame(frame_data, modifications)
+                    if modified_frame_data:
+                        frame_len = len(modified_frame_data)
+                        frame_header.length = frame_len
+                        new_payload += frame_header.build() + modified_frame_data
+                        offset = frame_end
+                        continue
+                new_payload += raw[offset:frame_end]
+                offset = frame_end
+            original_length = len(raw)
+            new_length = len(new_payload)
+            diff = new_length - original_length
+            pkt[Raw].load = new_payload
+
+            pkt[TCP].seq = pkt[TCP].seq + seq_diff[flow]
+            if pkt[TCP].flags & 0x10 and hasattr(pkt[TCP], 'ack'):
+                pkt[TCP].ack = pkt[TCP].ack + seq_diff[rev_flow]
+            seq_diff[flow] += diff
+
+        else:
+            pkt[TCP].seq = pkt[TCP].seq + seq_diff[flow]
+            if pkt[TCP].flags & 0x10 and hasattr(pkt[TCP], 'ack'):
+                pkt[TCP].ack = pkt[TCP].ack + seq_diff[rev_flow]
+
         if hasattr(pkt[IP], 'chksum'):
             del pkt[IP].chksum
         if hasattr(pkt[TCP], 'chksum'):
@@ -165,47 +267,52 @@ def process_packet(pkt, modifications, seq_diff, ip_replacements):
         if hasattr(pkt[IP], 'len'):
             del pkt[IP].len
 
-        # 更新帧长度
-        pkt.wirelen = len(pkt)  # 捕获到的帧总长度
-        pkt.caplen = pkt.wirelen  # 捕获到的有效数据长度
+        pkt.wirelen = len(pkt)
+        pkt.caplen = pkt.wirelen
 
-# ---------------------- 主处理流程 ----------------------
-PCAP_IN = "pcap/N16_create_16p.pcap"   # 输入 PCAP 文件路径
-PCAP_OUT = "pcap/N16_modified112.pcap"   # 输出 PCAP 文件路径
-
-# JSON 字段修改内容
-MODIFICATIONS = {
-    "supi": "imsi-460012300000001",
-    "pei": "imeisv-8611101000000011",
-    "gpsi": "msisdn-8613900000001",
-    "icnTunnelInfo": {"ipv4Addr": "10.0.0.1", "gtpTeid": "10000001"},
-    "cnTunnelInfo": {"ipv4Addr": "20.0.0.1", "gtpTeid": "50000001"},
-    "ueIpv4Address": "100.0.0.1",
-    "nrCellId": "010000001",
-    "uplink": "5000000000",
-    "downlink": "5000000000",
-    "path": "/nsmf-pdusession/v1/sm-contexts/1000000001/retrieve",
-    "authority": "200.20.20.25:80",
-    "ismfPduSessionUri": "http://200.20.20.26:80/nsmf-pdusession/v1/pdu-sessions/10000001"  # Updated ID
-}
-
-# 五元组 IP 替换内容
-IP_REPLACEMENTS = {
-    "200.20.20.26": "30.0.0.1",
-    "200.20.20.25": "40.0.0.1"
-}
+# 在文件开头添加全局变量
+EXTRACTED_SUPI = None
 
 print(f"开始处理文件 {PCAP_IN}")
 packets = rdpcap(PCAP_IN)
 modified_packets = []
 
-# 保存每个流累计的 TCP 序号偏移量
 seq_diff = {}
 
-for pkt in packets:
-    if TCP in pkt or Raw in pkt:
-        process_packet(pkt, MODIFICATIONS, seq_diff, IP_REPLACEMENTS)
+# 添加统计信息
+modified_ip_count = 0
+modified_header_count = 0
+modified_json_count = 0
+
+for idx, pkt in enumerate(packets):
+    original_pkt = pkt.copy()
+    
+    if IP in pkt:
+        if pkt[IP].src == SRC_IP_ORIGINAL or pkt[IP].dst == DST_IP_ORIGINAL:
+            modified_ip_count += 1
+    
+    if TCP in pkt:
+        process_packet(pkt, seq_diff, TARGET_FIELDS, ORIGINAL_IMSI, MODIFIED_IMSI, pkt_index=idx)
+        # 检查是否修改了内容
+        if original_pkt != pkt:
+            if Raw in original_pkt and Raw in pkt:
+                if b':path' in original_pkt[Raw].load or b'location' in original_pkt[Raw].load:
+                    modified_header_count += 1
+                if b'application/json' in original_pkt[Raw].load:
+                    modified_json_count += 1
+    
     modified_packets.append(pkt)
 
-print(f"保存修改后的 PCAP 到 {PCAP_OUT}")
+# 检查是否成功提取了第46个报文的location字段
+if 'EXTRACTED_SUPI' in globals() and EXTRACTED_SUPI:
+    print(f"成功提取第46个报文的supi值: {EXTRACTED_SUPI}")
+else:
+    print("未能提取第46个报文的supi值")
+
+print(f"修改统计:")
+print(f"- 修改IP地址数量: {modified_ip_count}")
+print(f"- 修改HTTP头部数量: {modified_header_count}")
+print(f"- 修改JSON内容数量: {modified_json_count}")
+
+print(f"保存修改到 {PCAP_OUT}")
 wrpcap(PCAP_OUT, modified_packets)
