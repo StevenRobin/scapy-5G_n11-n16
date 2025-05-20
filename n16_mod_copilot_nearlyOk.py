@@ -36,7 +36,7 @@ def safe_log(level, message):
 # ========== 变量定义 ==========
 # HTTP2/JSON/五元组相关变量
 # HTTP2 authority
-auth1 = "30.0.0.1"
+auth1 = "40.0.0.1"
 # HTTP2 path中的context_ID
 context_ID = "9000000001"
 # JSON字段变量
@@ -151,7 +151,7 @@ def modify_json_data(payload):
                         # 替换host和最后数字
                         m = re.match(r"http://([\d.]+):\d+/(.+/)(\d+)", value)
                         if m:
-                            new_val = f"http://{dip1}:80/{m.group(2)}{pduSessionId1}"
+                            new_val = f"http://{sip1}/{m.group(2)}{pduSessionId1}"
                             if value != new_val:
                                 obj[key] = new_val
                                 modified = True
