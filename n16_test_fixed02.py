@@ -151,7 +151,7 @@ def modify_json_data(payload):
                         # 替换host和最后数字
                         m = re.match(r"http://([\d.]+):\d+/(.+/)(\d+)", value)
                         if m:
-                            new_val = f"http://{dip1}:80/{m.group(2)}{pduSessionId1}"
+                            new_val = f"http://{dip1}/{m.group(2)}{pduSessionId1}"
                             if value != new_val:
                                 obj[key] = new_val
                                 modified = True
@@ -1264,7 +1264,7 @@ def apply_direct_binary_replacements(pkt, idx):
 def main():
     """主处理流程"""
     PCAP_IN = "pcap/N16_create_16p.pcap"
-    PCAP_OUT = "pcap/N16_1426.pcap"
+    PCAP_OUT = "pcap/N16_1427.pcap"
     
     logger.info(f"开始处理文件 {PCAP_IN}")
     if not os.path.exists(PCAP_IN):

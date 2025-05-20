@@ -151,7 +151,7 @@ def modify_json_data(payload):
                         # 替换host和最后数字
                         m = re.match(r"http://([\d.]+):\d+/(.+/)(\d+)", value)
                         if m:
-                            new_val = f"http://{dip1}:80/{m.group(2)}{pduSessionId1}"
+                            new_val = f"http://{sip1}/{m.group(2)}{pduSessionId1}"
                             if value != new_val:
                                 obj[key] = new_val
                                 modified = True
@@ -775,7 +775,7 @@ def process_special_headers(frame_data, pkt_idx):
                     if isinstance(value_str, str):
                         url_match = re.match(r"(http://)[\d\.]+:\d+(.*)", value_str)
                         if url_match:
-                            new_loc = f"{url_match.group(1)}{sip1}:80{url_match.group(2)}"
+                            new_loc = f"{url_match.group(1)}{dip1}:80{url_match.group(2)}"
                             if new_loc != value_str:
                                 if isinstance(value, bytes):
                                     new_headers.append((name, new_loc.encode()))
