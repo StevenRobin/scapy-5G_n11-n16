@@ -1,0 +1,5 @@
+2025-05-21 00:39:33,304 - INFO - 步骤1: 使用n16_test_fixed02.py处理文件 pcap/N16_create_16p.pcap
+2025-05-21 00:39:34,119 - INFO - n16_test_fixed02.py处理成功
+2025-05-21 00:39:34,119 - INFO - 步骤2: 使用fix_pkt15_content_length.py修复第15包content-length
+2025-05-21 00:39:34,864 - INFO - fix_pkt15_content_length.py处理成功
+2025-05-21 00:39:34,865 - INFO - 完整处理完成，输出文件: pcap/N16_complete_fixed.pcap

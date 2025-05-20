@@ -36,7 +36,7 @@ def safe_log(level, message):
 # ========== 变量定义 ==========
 # HTTP2/JSON/五元组相关变量
 # HTTP2 authority
-auth1 = "30.0.0.1"
+auth1 = "40.0.0.1"
 # HTTP2 path中的context_ID
 context_ID = "9000000001"
 # JSON字段变量
@@ -151,7 +151,7 @@ def modify_json_data(payload):
                         # 替换host和最后数字
                         m = re.match(r"http://([\d.]+):\d+/(.+/)(\d+)", value)
                         if m:
-                            new_val = f"http://{dip1}/{m.group(2)}{pduSessionId1}"
+                            new_val = f"http://{sip1}/{m.group(2)}{pduSessionId1}"
                             if value != new_val:
                                 obj[key] = new_val
                                 modified = True
@@ -728,14 +728,13 @@ def process_special_headers(frame_data, pkt_idx):
                             if field_name not in [b':method', b':scheme', b':authority', b':path']:
                                 logger.info(f"保留原有头部字段: {field_name}: {field_value}")
                                 frame_data = frame_data[:field_pos] + frame_data[end_pos:]
-                            start_pos = end_pos + 1
-                    
-                    # 合并新头部和原有数据
+                            start_pos = end_pos + 1                      # 合并新头部和原有数据
                     frame_data = new_headers_data + frame_data
                     logger.info(f"为第{pkt_idx}号报文创建了全新的头部块，包含authority: {auth1}")
-                
-                return frame_data            # 第15号报文特殊处理 - 替换location
+                    return frame_data
             elif pkt_idx == 15:
+                logger.info(f"特殊处理第15号报文 - 强化location和content-length处理")
+                
                 # 尝试找到location字段 - 更全面的匹配模式
                 possible_patterns = [
                     b'location:', 
@@ -748,8 +747,24 @@ def process_special_headers(frame_data, pkt_idx):
                 new_location = f"http://{auth1}:80/nsmf-pdusession/v1/pdu-sessions/{context_ID}"
                 new_location_bytes = new_location.encode()
                 
+                # 检查和处理content-length字段 - 先移除旧的，后面会重新添加
+                for cl_pattern in [b'content-length:', b'Content-Length:', b'content-length: ', b'Content-Length: ']:
+                    pos = frame_data.find(cl_pattern)
+                    if pos >= 0:
+                        logger.info(f"找到content-length字段位置: {pos}，先移除它")
+                        # 找到这一行的开始和结束
+                        line_start = max(0, frame_data.rfind(b'\n', 0, pos))
+                        line_end = frame_data.find(b'\n', pos)
+                        if line_end < 0:
+                            line_end = len(frame_data)
+                        # 移除整行
+                        if line_start >= 0 and line_end > line_start:
+                            frame_data = frame_data[:line_start] + frame_data[line_end:]
+                            logger.info(f"移除旧的content-length字段")
+                            break
+                
                 # 优先处理：直接查找并替换HTTP URI
-                uri_pattern = re.compile(br'http://[0-9.]+(?::[0-9]+)?/nsmf-pdusession/v1/pdu-sessions/[0-9]+')
+                uri_pattern = re.compile(br'http://[\d\.]+(?::\d+)?/nsmf-pdusession/v1/pdu-sessions/\d+')
                 match = uri_pattern.search(frame_data)
                 if match:
                     old_uri = match.group(0)
@@ -983,54 +998,162 @@ def process_special_headers(frame_data, pkt_idx):
 def update_content_length(headers_data, body_length):
     """更新HEADERS中的Content-Length字段"""
     try:
-        # 先尝试直接在二进制数据中替换content-length值
-        content_length_binary_updated = False
+        logger.debug(f"尝试更新Content-Length为: {body_length}")
         
-        # 尝试查找content-length字段
-        for cl_pattern in [b'content-length:', b'content-length: ', b'Content-Length:', b'Content-Length: ']:
-            cl_pos = headers_data.find(cl_pattern)
-            if cl_pos >= 0:
-                # 找到了content-length字段
-                val_start = cl_pos + len(cl_pattern)
-                val_end = val_start
-                # 找到值的结束位置
-                for end_marker in [b'\r\n', b'\n', b';']:
-                    pos = headers_data.find(end_marker, val_start)
-                    if pos > 0:
-                        val_end = pos
-                        break
+        # 清除所有现有的content-length字段，避免重复
+        def remove_existing_content_length(headers_data):
+            try:
+                decoder = Decoder()
+                encoder = Encoder()
+                headers = decoder.decode(headers_data)
+                new_headers = []
                 
-                if val_end > val_start:
-                    # 提取当前值并替换
-                    current_value = headers_data[val_start:val_end].strip()
-                    try:
-                        current_len = int(current_value)
-                        if current_len != body_length:
-                            # 替换值
-                            new_value = str(body_length).encode()
-                            headers_data = headers_data[:val_start] + new_value + headers_data[val_end:]
-                            logger.info(f"直接替换Content-Length: {current_len} -> {body_length}")
-                            content_length_binary_updated = True
-                            break  # 找到并替换了一个，就退出循环
-                    except ValueError:
-                        logger.warning(f"无法解析Content-Length值: {current_value}")
+                # 过滤掉所有content-length字段
+                for name, value in headers:
+                    name_str = name.decode() if isinstance(name, bytes) else name
+                    is_content_length = isinstance(name_str, str) and name_str.lower() == "content-length"
+                    if not is_content_length:
+                        new_headers.append((name, value))
+                
+                # 重新编码
+                return encoder.encode(new_headers)
+            except Exception as e:
+                logger.warning(f"清除已存在content-length失败: {e}")
+                
+                # 尝试二进制方式移除
+                modified_data = headers_data
+                for cl_pattern in [b'content-length:', b'Content-Length:', b'content-length: ', b'Content-Length: ']:
+                    pattern_pos = modified_data.lower().find(cl_pattern.lower())
+                    while pattern_pos >= 0:
+                        # 找到了content-length字段
+                        val_start = pattern_pos + len(cl_pattern)
+                        line_end = -1
+                        
+                        # 找到行尾
+                        for end_mark in [b'\r\n', b'\n']:
+                            end_pos = modified_data.find(end_mark, val_start)
+                            if end_pos > 0:
+                                line_end = end_pos + len(end_mark)
+                                break
+                        
+                        if line_end > val_start:
+                            # 移除整行content-length
+                            modified_data = modified_data[:pattern_pos] + modified_data[line_end:]
+                            logger.info("通过二进制方式移除了content-length字段")
+                            # 由于数据已修改，重新从头开始查找
+                            pattern_pos = modified_data.lower().find(cl_pattern.lower())
+                        else:
+                            # 继续查找下一个匹配位置
+                            pattern_pos = modified_data.lower().find(cl_pattern.lower(), pattern_pos + 1)
+                
+                return modified_data
+        
+        # 先尝试清理已有的content-length
+        headers_cleaned = False
+        if b'content-length' in headers_data.lower() or b'Content-Length' in headers_data:
+            try:
+                cleaned_headers = remove_existing_content_length(headers_data)
+                if len(cleaned_headers) > 0:
+                    headers_data = cleaned_headers
+                    headers_cleaned = True
+                    logger.info("成功移除现有content-length字段")
+            except Exception as e:
+                logger.warning(f"移除现有content-length字段失败: {e}")
+        
+        # 检查是否已有content-length (以二进制形式)
+        content_length_binary_updated = False
+        if not headers_cleaned:
+            # 尝试查找content-length字段 - 使用更多模式提高匹配成功率
+            for cl_pattern in [
+                b'content-length:', b'content-length: ', 
+                b'Content-Length:', b'Content-Length: ',
+                b'content-length=', b'Content-Length=',
+                b'\ncontent-length:', b'\nContent-Length:',
+                b'\r\ncontent-length:', b'\r\nContent-Length:'
+            ]:
+                cl_pos = headers_data.lower().find(cl_pattern.lower())
+                if cl_pos >= 0:
+                    # 找到了content-length字段
+                    val_start = cl_pos + len(cl_pattern)
+                    val_end = val_start
+                    # 找到值的结束位置 - 增加更多边界标记
+                    for end_marker in [b'\r\n', b'\n', b';', b',', b' ', b'\t']:
+                        pos = headers_data.find(end_marker, val_start)
+                        if pos > 0:
+                            val_end = pos
+                            break
+                    
+                    # 如果没有找到结束位置，使用安全限制
+                    if val_end == val_start:
+                        val_end = min(val_start + 20, len(headers_data))
+                    
+                    if val_end > val_start:
+                        # 提取当前值并替换
+                        current_value = headers_data[val_start:val_end].strip()
+                        try:
+                            current_len = int(current_value)
+                            if current_len != body_length:
+                                # 替换值
+                                new_value = str(body_length).encode()
+                                headers_data = headers_data[:val_start] + new_value + headers_data[val_end:]
+                                logger.info(f"直接替换Content-Length: {current_len} -> {body_length}")
+                                content_length_binary_updated = True
+                                break  # 找到并替换了一个，就退出循环
+                        except ValueError:
+                            logger.warning(f"无法解析Content-Length值: {current_value}")
+                            # 即使无法解析，也尝试替换
+                            try:
+                                new_value = str(body_length).encode()
+                                headers_data = headers_data[:val_start] + new_value + headers_data[val_end:]
+                                logger.info(f"强制替换无效的Content-Length为: {body_length}")
+                                content_length_binary_updated = True
+                                break
+                            except Exception as e:
+                                logger.error(f"强制替换Content-Length失败: {e}")
         
         # 如果直接二进制替换成功，返回结果
         if content_length_binary_updated:
             return headers_data
         
-        # 否则，使用HPACK解码/编码方式处理
+        # 尝试通过HPACK解码/编码方式处理
         try:
             decoder = Decoder()
-            headers = decoder.decode(headers_data)
+            encoder = Encoder()
+            
+            try:
+                headers = decoder.decode(headers_data)
+            except Exception as e:
+                logger.warning(f"HPACK解码失败，尝试简化内容后重试: {e}")
+                # 如果解码失败，尝试简化数据并重试
+                simplified_data = b''
+                if len(headers_data) > 0:
+                    # 提取可能的头部字段
+                    for line in headers_data.split(b'\r\n'):
+                        if b':' in line and len(line) < 100:
+                            simplified_data += line + b'\r\n'
+                
+                if not simplified_data:
+                    # 完全失败，创建一个空的头部集合
+                    headers = []
+                else:
+                    try:
+                        headers = decoder.decode(simplified_data)
+                    except:
+                        headers = []
+            
             modified = False
             new_headers = []
             content_length_found = False
             
+            if headers:
+                logger.debug(f"HPACK解码头部: {[(n.decode() if isinstance(n, bytes) else n, v) for n, v in headers]}")
+            
             for name, value in headers:
                 name_str = name.decode() if isinstance(name, bytes) else name
-                # 检查内容类型安全地处理
-                is_content_length = (isinstance(name_str, str) and name_str.lower() == "content-length")
+                # 检查内容类型
+                is_content_length = False
+                if isinstance(name_str, str):
+                    is_content_length = name_str.lower() == "content-length"
                 
                 if is_content_length:
                     content_length_found = True
@@ -1064,33 +1187,68 @@ def update_content_length(headers_data, body_length):
             
             if modified:
                 encoder = Encoder()
-                return encoder.encode(new_headers)
+                new_headers_data = encoder.encode(new_headers)
+                logger.debug(f"HPACK编码后头部长度: {len(new_headers_data)}")
+                return new_headers_data
             return headers_data
         except Exception as e:
             logger.error(f"HPACK处理Content-Length错误: {e}")
+            logger.error(traceback.format_exc())
+        
+        # 多重安全措施: 如果其他所有方法都失败，尝试强制在多个位置添加content-length字段
+        if b'content-length' not in headers_data.lower() and b'Content-Length' not in headers_data:
+            insert_positions = []
             
-            # 如果解码失败，尝试强制添加content-length字段
-            if b'content-length' not in headers_data.lower() and b'Content-Length' not in headers_data:
-                # 寻找插入点 - 通常在其他头部字段之后
-                insert_pos = -1
-                for marker in [b'\r\n\r\n', b'\n\n', b'\r\n', b'\n']:
-                    pos = headers_data.rfind(marker)
-                    if pos > 0:
-                        insert_pos = pos
-                        break
-                
-                if insert_pos > 0:
-                    # 直接在末尾添加content-length字段
-                    cl_header = b'\r\ncontent-length: ' + str(body_length).encode() 
-                    headers_data = headers_data[:insert_pos] + cl_header + headers_data[insert_pos:]
-                    logger.info(f"强制添加Content-Length: {body_length}")
-                    return headers_data
+            # 首先查找最佳插入点
+            for marker in [b'\r\n\r\n', b'\n\n', b'\r\n', b'\n']:
+                pos = headers_data.rfind(marker)
+                if pos > 0:
+                    insert_positions.append((pos, 1))  # 权重高
+
+            # 其次在知名头部字段后添加
+            for header_name in [b':status', b':path', b'location', b'date', b'server']:
+                pos = headers_data.find(header_name)
+                if pos > 0:
+                    line_end = -1
+                    for end_mark in [b'\r\n', b'\n']:
+                        end_pos = headers_data.find(end_mark, pos)
+                        if end_pos > 0:
+                            line_end = end_pos + len(end_mark)
+                            break
+                    if line_end > 0:
+                        insert_positions.append((line_end, 2))  # 权重中等
             
-            return headers_data
+            # 最后考虑数据末尾
+            if len(headers_data) > 0:
+                insert_positions.append((len(headers_data), 3))  # 权重低
+            
+            # 按权重排序尝试插入
+            for pos, _ in sorted(insert_positions, key=lambda x: x[1]):
+                try:
+                    # 确保添加适当的换行
+                    if pos > 0 and headers_data[pos-1:pos] not in [b'\r', b'\n']:
+                        cl_header = b'\r\ncontent-length: ' + str(body_length).encode()
+                    else:
+                        cl_header = b'content-length: ' + str(body_length).encode()
+                    
+                    new_data = headers_data[:pos] + cl_header + headers_data[pos:]
+                    logger.info(f"在位置 {pos} 强制添加Content-Length: {body_length}")
+                    return new_data
+                except Exception as e:
+                    logger.error(f"在位置 {pos} 添加Content-Length失败: {e}")
+            
+            # 绝对最后手段：直接添加到数据末尾
+            try:
+                cl_header = b'\r\ncontent-length: ' + str(body_length).encode()
+                logger.info(f"将Content-Length: {body_length} 添加到数据末尾")
+                return headers_data + cl_header
+            except Exception as e:
+                logger.error(f"添加Content-Length到末尾失败: {e}")
+            
+        return headers_data
         
     except Exception as e:
         logger.error(f"更新Content-Length错误: {e}")
-        import traceback
         logger.error(traceback.format_exc())
         return headers_data
 
@@ -1263,8 +1421,19 @@ def apply_direct_binary_replacements(pkt, idx):
 
 def main():
     """主处理流程"""
-    PCAP_IN = "pcap/N16_create_16p.pcap"
-    PCAP_OUT = "pcap/N16_1427.pcap"
+    # 解析命令行参数
+    import argparse
+    parser = argparse.ArgumentParser(description='处理N16 PCAP文件中的HTTP/2帧')
+    parser.add_argument('-i', '--input', dest='input_file', default="pcap/N16_create_16p.pcap",
+                       help='输入PCAP文件路径')
+    parser.add_argument('-o', '--output', dest='output_file', default="pcap/N16_1435.pcap",
+                       help='输出PCAP文件路径')
+    
+    args = parser.parse_args()
+    
+    # 输入输出文件路径
+    PCAP_IN = args.input_file
+    PCAP_OUT = args.output_file
     
     logger.info(f"开始处理文件 {PCAP_IN}")
     if not os.path.exists(PCAP_IN):
@@ -1360,9 +1529,9 @@ def main():
                     frame_header.length = new_data_len
                     # 更新帧内容
                     frames[data_idx] = (frame_header, frame_type, new_data, start_offset, start_offset + 9 + new_data_len)
-                    
-                    # 更新相关的content-length - 特别重视第15号报文
-                    if idx == 15 or content_length_frames:
+                          # 更新相关的content-length - 特别重视第15号报文
+                    if content_length_frames:
+                        # 普通处理方式：更新已找到的content-length字段
                         for cl_idx in content_length_frames:
                             cl_frame_header, cl_frame_type, cl_frame_data, cl_start_offset, cl_end_offset = frames[cl_idx]
                             logger.debug(f"更新第{idx}个报文的content-length字段为: {new_data_len}")
@@ -1371,31 +1540,215 @@ def main():
                                 logger.info(f"第{idx}个报文的content-length已更新")
                                 cl_frame_header.length = len(new_cl_data)
                                 frames[cl_idx] = (cl_frame_header, cl_frame_type, new_cl_data, cl_start_offset, cl_start_offset + 9 + len(new_cl_data))
-                    
-                        # 对于第15号报文，强制确保content-length已更新
-                        if idx == 15 and not content_length_frames:
-                            logger.warning("第15号报文没有content-length帧，尝试强制添加")
-                            # 查找HEADERS帧添加content-length
-                            for frame_idx, (frame_header, frame_type, frame_data, start_offset, end_offset) in enumerate(frames):
-                                if frame_type == 0x1:  # HEADERS帧
-                                    logger.info(f"在第{idx}个报文的HEADERS帧中添加缺失的content-length字段")
-                                    # 直接在二进制数据末尾添加content-length
-                                    cl_header = b'\r\ncontent-length: ' + str(new_data_len).encode()
-                                    new_frame_data = frame_data
-                                    
-                                    # 查找插入点 - 通常在换行前
-                                    for line_end in [b'\r\n\r\n', b'\n\n', b'\r\n', b'\n']:
-                                        pos = new_frame_data.rfind(line_end)
-                                        if pos > 0:
-                                            new_frame_data = new_frame_data[:pos] + cl_header + new_frame_data[pos:]
-                                            logger.info(f"强制添加Content-Length: {new_data_len}")
-                                            modified = True
+                      # 对于第15号报文，使用多种方式强制确保content-length正确更新
+                    if idx == 15:
+                        logger.info("对第15号报文执行特殊处理来确保content-length正确")
+                        
+                        # 1. 查找所有HEADERS帧
+                        headers_frames_idx = []
+                        for frame_idx, (frame_header, frame_type, frame_data, start_offset, end_offset) in enumerate(frames):
+                            if frame_type == 0x1:  # HEADERS帧
+                                headers_frames_idx.append(frame_idx)
+                        
+                        # 如果有HEADERS帧且DATA帧长度已知
+                        if headers_frames_idx and new_data_len > 0:
+                            # 首先，尝试在所有HEADERS帧中清除所有现有的content-length
+                            # 这样可以避免多个content-length造成混淆
+                            pre_cleaned_frames = False
+                            
+                            for hdr_idx in headers_frames_idx:
+                                frame_header, frame_type, frame_data, start_offset, end_offset = frames[hdr_idx]
+                                
+                                # 预处理：先移除可能存在的所有content-length字段
+                                try:
+                                    # 使用二进制方式查找并移除content-length字段
+                                    pattern_removed = False
+                                    for cl_pattern in [b'content-length:', b'Content-Length:', b'content-length: ', b'Content-Length: ']:
+                                        pattern_pos = frame_data.lower().find(cl_pattern.lower())
+                                        while pattern_pos >= 0:
+                                            # 找到了content-length字段
+                                            val_start = pattern_pos + len(cl_pattern)
+                                            val_end = -1
                                             
-                                            # 更新帧内容
-                                            frame_header.length = len(new_frame_data)
-                                            frames[frame_idx] = (frame_header, frame_type, new_frame_data, start_offset, start_offset + 9 + len(new_frame_data))
+                                            # 找到行尾
+                                            for end_mark in [b'\r\n', b'\n']:
+                                                end_pos = frame_data.find(end_mark, val_start)
+                                                if end_pos > 0:
+                                                    val_end = end_pos + len(end_mark)
+                                                    break
+                                            
+                                            if val_end > val_start:
+                                                # 删除整个content-length行
+                                                frame_data = frame_data[:pattern_pos] + frame_data[val_end:]
+                                                logger.info(f"第15号报文：移除现有的content-length字段")
+                                                pattern_removed = True
+                                                pre_cleaned_frames = True
+                                                # 继续查找下一个匹配位置
+                                                pattern_pos = frame_data.lower().find(cl_pattern.lower())
+                                            else:
+                                                # 如果没找到完整行尾，尝试寻找其他终止符
+                                                for alt_end in [b';', b',', b' ', b'\t']:
+                                                    end_pos = frame_data.find(alt_end, val_start)
+                                                    if end_pos > 0:
+                                                        val_end = end_pos + len(alt_end)
+                                                        break
+                                                
+                                                if val_end > val_start:
+                                                    # 删除字段值部分
+                                                    frame_data = frame_data[:pattern_pos] + frame_data[val_end:]
+                                                    logger.info(f"第15号报文：移除不完整的content-length字段")
+                                                    pattern_removed = True
+                                                    pre_cleaned_frames = True
+                                                    pattern_pos = frame_data.lower().find(cl_pattern.lower())
+                                                else:
+                                                    # 继续查找下一个匹配位置
+                                                    pattern_pos = frame_data.lower().find(cl_pattern.lower(), pattern_pos + 1)
+                                    
+                                    # 使用HPACK解码/编码方式清理
+                                    if not pattern_removed:
+                                        try:
+                                            decoder = Decoder()
+                                            encoder = Encoder()
+                                            headers = decoder.decode(frame_data)
+                                            new_headers = []
+                                            cl_removed = False
+                                            
+                                            for name, value in headers:
+                                                name_str = name.decode() if isinstance(name, bytes) else name
+                                                # 过滤掉所有content-length字段
+                                                is_content_length = isinstance(name_str, str) and name_str.lower() == "content-length"
+                                                if is_content_length:
+                                                    cl_removed = True
+                                                    continue
+                                                new_headers.append((name, value))
+                                            
+                                            if cl_removed:
+                                                frame_data = encoder.encode(new_headers)
+                                                logger.info(f"第15号报文：通过HPACK移除content-length字段")
+                                                pre_cleaned_frames = True
+                                        except Exception as e:
+                                            logger.warning(f"HPACK清理content-length字段失败: {e}")
+                                except Exception as e:
+                                    logger.warning(f"预处理content-length字段失败: {e}")
+                                
+                                # 更新帧内容（即使只是预处理阶段）
+                                if pre_cleaned_frames:
+                                    frame_header.length = len(frame_data)
+                                    frames[hdr_idx] = (frame_header, frame_type, frame_data, start_offset, start_offset + 9 + len(frame_data))
+                                    modified = True
+                            
+                            # 现在添加新的content-length字段到第一个HEADERS帧
+                            if headers_frames_idx:
+                                hdr_idx = headers_frames_idx[0]  # 选择第一个HEADERS帧
+                                frame_header, frame_type, frame_data, start_offset, end_offset = frames[hdr_idx]
+                                
+                                # 使用增强版的update_content_length函数添加content-length
+                                logger.info(f"第15号报文：使用增强方法添加content-length: {new_data_len}")
+                                new_frame_data = update_content_length(frame_data, new_data_len)
+                                
+                                # 检查是否确实添加了content-length
+                                content_length_added = False
+                                content_length_correct = False
+                                for cl_pattern in [b'content-length:', b'Content-Length:']:
+                                    pattern_pos = new_frame_data.lower().find(cl_pattern.lower())
+                                    if pattern_pos >= 0:
+                                        content_length_added = True
+                                        
+                                        # 验证值是否正确
+                                        val_start = pattern_pos + len(cl_pattern)
+                                        val_end = -1
+                                        
+                                        for end_marker in [b'\r\n', b'\n', b';', b',', b' ', b'\t']:
+                                            end_pos = new_frame_data.find(end_marker, val_start)
+                                            if end_pos > 0:
+                                                val_end = end_pos
+                                                break
+                                        
+                                        if val_end > val_start:
+                                            try:
+                                                cl_value = int(new_frame_data[val_start:val_end].strip())
+                                                if cl_value == new_data_len:
+                                                    content_length_correct = True
+                                                    logger.info(f"第15号报文：验证content-length正确: {cl_value}")
+                                                    break
+                                            except ValueError:
+                                                pass
+                                
+                                if content_length_added:
+                                    logger.info(f"第15号报文：成功添加content-length")
+                                    frame_header.length = len(new_frame_data)
+                                    frames[hdr_idx] = (frame_header, frame_type, new_frame_data, start_offset, start_offset + 9 + len(new_frame_data))
+                                    modified = True
+                                
+                                # 如果值不正确或没有添加成功，尝试直接插入
+                                if not content_length_correct:
+                                    logger.warning("第15号报文：常规添加content-length失败或值不正确，尝试直接插入")
+                                    
+                                    # 先尝试在头部区域末尾插入
+                                    insert_pos = -1
+                                    for marker in [b'\r\n\r\n', b'\n\n', b'\r\n', b'\n']:
+                                        pos = new_frame_data.rfind(marker)
+                                        if pos > 0:
+                                            insert_pos = pos
                                             break
-                                    break
+                                    
+                                    if insert_pos > 0:
+                                        cl_header = b'\r\ncontent-length: ' + str(new_data_len).encode()
+                                        newer_frame_data = new_frame_data[:insert_pos] + cl_header + new_frame_data[insert_pos:]
+                                        
+                                        # 更新帧内容
+                                        frame_header.length = len(newer_frame_data)
+                                        frames[hdr_idx] = (frame_header, frame_type, newer_frame_data, start_offset, start_offset + 9 + len(newer_frame_data))
+                                        logger.info(f"第15号报文：在插入点 {insert_pos} 强制添加content-length: {new_data_len}")
+                                        modified = True
+                                    else:
+                                        # 若找不到插入点，直接附加到末尾
+                                        cl_header = b'\r\ncontent-length: ' + str(new_data_len).encode()
+                                        newer_frame_data = new_frame_data + cl_header
+                                        
+                                        # 更新帧内容
+                                        frame_header.length = len(newer_frame_data)
+                                        frames[hdr_idx] = (frame_header, frame_type, newer_frame_data, start_offset, start_offset + 9 + len(newer_frame_data))
+                                        logger.info(f"第15号报文：在末尾强制添加content-length: {new_data_len}")
+                                        modified = True
+                                
+                            # 作为双重保险，检查修改后的报文是否包含正确的content-length
+                            content_length_correct = False
+                            
+                            # 重建临时payload来验证
+                            temp_payload = b''
+                            for temp_header, _, temp_data, _, _ in frames:
+                                temp_payload += temp_header.build() + temp_data
+                            
+                            # 检查重建后的报文是否包含正确的content-length
+                            for cl_pattern in [b'content-length:', b'Content-Length:']:
+                                pattern_pos = temp_payload.lower().find(cl_pattern.lower())
+                                if pattern_pos >= 0:
+                                    val_start = pattern_pos + len(cl_pattern)
+                                    val_end = -1
+                                    
+                                    for end_mark in [b'\r\n', b'\n', b';', b',', b' ']:
+                                        end_pos = temp_payload.find(end_mark, val_start)
+                                        if end_pos > 0:
+                                            val_end = end_pos
+                                            break
+                                    
+                                    if val_end > val_start:
+                                        try:
+                                            cl_value = int(temp_payload[val_start:val_end].strip())
+                                            if cl_value == new_data_len:
+                                                content_length_correct = True
+                                                logger.info(f"第15号报文：最终验证content-length正确: {cl_value}")
+                                                break
+                                            else:
+                                                logger.warning(f"第15号报文：最终content-length值不正确: {cl_value} != {new_data_len}")
+                                        except ValueError:
+                                            logger.warning(f"第15号报文：无法解析最终content-length值")
+                            
+                            # 如果所有尝试都失败，最后一招：使用外部工具
+                            if not content_length_correct and modified:
+                                logger.warning("第15号报文：所有尝试都未能正确设置content-length，考虑使用外部工具")
+                                # 这里不立即调用外部工具，而是记录警告，让用户知晓可能需要额外处理
                     else:
                         # 如果找不到content-length字段，尝试在所有HEADERS帧中添加
                         for frame_idx, (frame_header, frame_type, frame_data, start_offset, end_offset) in enumerate(frames):
@@ -1408,7 +1761,6 @@ def main():
                                     frames[frame_idx] = (cl_frame_header, frame_type, new_cl_data, start_offset, start_offset + 9 + len(new_cl_data))
                                     logger.info(f"已在第{idx}个报文中添加content-length: {new_data_len}")
                                     modified = True
-                                    break
               # 重建payload
             for frame_header, _, frame_data, _, _ in frames:
                 new_payload += frame_header.build() + frame_data
