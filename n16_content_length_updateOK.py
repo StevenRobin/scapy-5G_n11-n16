@@ -326,19 +326,16 @@ def replace_path_context_id(path_str, new_id):
 def process_special_headers(frame_data, pkt_idx):
     """特殊处理HTTP2 Headers帧"""
     try:
-        # 日志确认正在处理哪个报文
-        logger.info(f"开始处理第{pkt_idx}号报文的HTTP/2头部")
-
-        # 定义二进制搜索替换辅助函数 - 在整个函数中通用
-        def binary_replace(data, search_pattern, replace_pattern):
-            if search_pattern in data:
-                logger.debug(f"找到模式: {search_pattern}")
-                return data.replace(search_pattern, replace_pattern)
-            return data  # 返回原数据，而不是None，这样可以链式调用
-            
         # 第9、11、13、15号报文使用二进制替换方法，因为它们的头部可能无法由标准hpack正确解析
         if pkt_idx in {9, 11, 13, 15}:
-            logger.info(f"对第{pkt_idx}个报文使用混合处理方法 - 先尝试HPACK方法，如果失败则使用二进制方法")
+            logger.info(f"对第{pkt_idx}个报文使用二进制替换方法")
+            
+            # 二进制搜索替换辅助函数
+            def binary_replace(data, search_pattern, replace_pattern):
+                if search_pattern in data:
+                    logger.debug(f"找到模式: {search_pattern}")
+                    return data.replace(search_pattern, replace_pattern)
+                return data  # 返回原数据，而不是None，这样可以链式调用
                 
             # 第13号报文特殊处理 - 保留content-type并正确设置authority
             if pkt_idx == 13:
@@ -402,735 +399,99 @@ def process_special_headers(frame_data, pkt_idx):
                 encoder = Encoder()
                 new_data = encoder.encode(minimal_headers)
                 logger.info(f"为第13号报文创建了最小化头部，新长度: {len(new_data)}")
-                return new_data                # 第15号报文特殊处理 - 完全修复第15个报文的三个问题：
-                # 1. :status 字段长度=3，值="201"（不是"201 Created"）
-                # 2. 删除 :scheme: http 字段
-                # 3. 添加 content-length: 351 字段
+                return new_data
+
+            # 第15号报文特殊处理 - 修改location和添加correct content-length
             elif pkt_idx == 15:
-                logger.info(f"特殊处理第{pkt_idx}号报文 - 使用硬编码的HPACK头部解决三个关键问题")
+                logger.info(f"特殊处理第{pkt_idx}号报文 - 确保location正确且content-length存在")
                 
                 # 构建新的location值 - 使用auth1确保与:authority一致
                 new_location = f"http://{auth1}/nsmf-pdusession/v1/pdu-sessions/{context_ID}"
                 new_location_bytes = new_location.encode()
                 
-                # 使用硬编码的HPACK编码，确保：
-                # 1. :status 字段长度为3，值为 "201"（不是"201 Created"）
-                # 2. 不包含 :scheme: http 字段
-                # 3. 包含 content-length: 351 字段
-                status_code = b"201"  # 注意这里只使用"201"而不是"201 Created"
-                content_type = b"application/json"
-                
-                # 阶段1: 增强的直接识别和提取关键头部字段，以防HPACK解析失败
-                found_status = False
-                found_content_type = False
-                found_location = False
-                
-                # 强制确保状态码为"201 Created"，因为第15号报文是创建资源的响应
-                status_code = b"201 Created"
-                
-                # 记录关键字段的固定值 - 防止任何情况下的字段丢失
-                logger.info(f"第15号报文固定关键字段值: Status={status_code}, Location={new_location}, Content-Type={content_type}")
-                
-                # 扩展的正则模式以捕获更多变体的头部字段格式
-                # 查找并保存现有头部字段，确保不丢失重要信息
-                for field_pattern, flag in [
-                    (b':status:', 'found_status'), 
-                    (b':status: ', 'found_status'),
-                    (b':status ', 'found_status'),
-                    (b':status=', 'found_status'),
-                    (b'content-type:', 'found_content_type'),
-                    (b'content-type: ', 'found_content_type'),
-                    (b'Content-Type:', 'found_content_type'),
-                    (b'Content-Type: ', 'found_content_type'),
-                    (b'content-type=', 'found_content_type'),
-                    (b'Content-Type=', 'found_content_type'),
-                    (b'location:', 'found_location'),
-                    (b'location: ', 'found_location'),
-                    (b'Location:', 'found_location'),
-                    (b'Location: ', 'found_location'),
-                    (b'location=', 'found_location'),
-                    (b'Location=', 'found_location')
-                ]:
-                    field_pos = frame_data.find(field_pattern)
-                    if field_pos >= 0:
-                        val_start = field_pos + len(field_pattern)
-                        val_end = -1
-                        
-                        # 查找字段值的结束位置
-                        for end_mark in [b'\r\n', b'\n', b';']:
-                            pos = frame_data.find(end_mark, val_start)
-                            if pos > 0 and (val_end < 0 or pos < val_end):
-                                val_end = pos
-                        
-                        if val_end < 0:
-                            val_end = len(frame_data)
-                        
-                        field_value = frame_data[val_start:val_end].strip()
-                        if field_value:
-                            if 'status' in flag and not found_status:
-                                # 对第15号报文，我们总是使用固定的201状态码
-                                # status_code = field_value  # 注释掉，使用默认值
-                                found_status = True
-                                logger.info(f"发现状态码，但固定使用201 Created: {status_code}")
-                            elif 'content_type' in flag and not found_content_type:
-                                # 如果找到了content-type，但确保它是application/json
-                                if b'json' in field_value.lower():
-                                    content_type = field_value
-                                # 否则强制使用默认值
-                                found_content_type = True
-                                logger.info(f"设置content-type值: {content_type}")
-                            elif 'location' in flag and not found_location:
-                                # 我们总是使用新构建的location值，不保存原始值
-                                found_location = True
-                                logger.info(f"发现原始location字段，将替换为: {new_location}")
-                
-                # 阶段2: 保存原始的content-length字段值（如果存在）
-                original_content_length = None
-                for cl_pattern in [b'content-length:', b'Content-Length:']:
-                    cl_pos = frame_data.lower().find(cl_pattern.lower())
-                    if cl_pos >= 0:
-                        val_start = cl_pos + len(cl_pattern)
-                        val_end = frame_data.find(b'\r\n', val_start)
-                        if val_end < 0:
-                            val_end = frame_data.find(b'\n', val_start)
-                        if val_end < 0:
-                            val_end = len(frame_data)
-                        
-                        # 提取content-length值
-                        cl_value_bytes = frame_data[val_start:val_end].strip()
-                        try:
-                            cl_value = cl_value_bytes.decode('utf-8', errors='ignore')
-                            original_content_length = int(cl_value)
-                            logger.info(f"发现原始content-length值: {original_content_length}")
-                        except (ValueError, UnicodeDecodeError):
-                            logger.warning(f"无法解析content-length值: {cl_value_bytes}")
-                        break                  # 阶段3: 使用完全硬编码的HPACK头部解决三个关键问题
+                # 尝试解码现有头部
                 try:
-                    # 使用正确的硬编码HPACK头部处理：
-                    # 1. :status: 201 (确保length=3，值为"201")
-                    # 2. 无:scheme字段
-                    # 3. 添加content-length: 351字段
-                    
-                    # 使用硬编码的HPACK字节序列 - 从fix_all_issues.py复制
-                    headers_block = bytes.fromhex(
-                        # :status: 201 (确保length=3，值为"201")
-                        "8840" +
-                        # content-type: application/json
-                        "5a94e7821e0382f80b2d2d57af609589d34d1f6a1271d882" +
-                        # location: http://40.0.0.1/nsmf-pdusession/v1/pdu-sessions/9000000001
-                        "4d1f6cf1e3c2e5f23a6ba0ab90f4ff" +
-                        # content-length: 351 (明确包含此字段)
-                        "5c1063636f6e74656e742d6c656e6774683a20333531" +
-                        # date: Wed, 22 May 2025 02:48:05 GMT
-                        "6461746557363d9d29ae30c08775c95a9f"
-                    )
-                    
-                    # 计算HEADERS帧长度
-                    header_length = len(headers_block)
-                    
-                    # 创建帧头 (9字节)
-                    frame_type = 1  # HEADERS帧
-                    flags = 4       # END_HEADERS
-                    stream_id = 1   # 流ID=1
-                    
-                    header_frame = (
-                        header_length.to_bytes(3, byteorder='big') +  # 长度 (3字节)
-                        bytes([frame_type]) +                        # 类型 (1字节)
-                        bytes([flags]) +                             # 标志 (1字节)
-                        bytes([0, 0, 0, stream_id])                  # 保留位(1位) + 流ID(31位) = 4字节
-                    )
-                    
-                    # 查找原始DATA帧
-                    data_frame = None
-                    offset = 0
-                    
-                    while offset < len(frame_data) - 9:  # 9字节是帧头的长度
-                        # 尝试解析帧头
-                        try:
-                            frame_length = int.from_bytes(frame_data[offset:offset+3], byteorder='big')
-                            frame_type_value = frame_data[offset+3]
-                            
-                            # 有效性检查
-                            if frame_length >= 0 and frame_length < 16384 and offset + 9 + frame_length <= len(frame_data):
-                                # 如果是DATA帧
-                                if frame_type_value == 0:  # DATA帧
-                                    data_frame = frame_data[offset:offset+9+frame_length]
-                                    logger.info(f"找到DATA帧, 长度: {frame_length}")
-                                    break
-                                offset += 9 + frame_length
-                            else:
-                                offset += 1
-                        except Exception as e:
-                            logger.error(f"解析帧时出错: {e}")
-                            offset += 1
-                    
-                    # 如果找不到DATA帧，提供默认的或者空的DATA帧
-                    if data_frame is None:
-                        logger.warning("未找到有效的DATA帧，使用默认DATA帧")
-                        # 使用与fix_all_issues.py相同的默认DATA帧
-                        data_frame = bytes.fromhex(
-                            "00000159" +  # 长度 (345字节)
-                            "00" +        # 类型 (DATA帧)
-                            "00" +        # 标志
-                            "00000001" +  # 流ID
-                            # DATA负载内容 (JSON格式)
-                            "7b2274797065223a2243524541544544" +
-                            "5f5241535345535349" +
-                            "4f4e5f4143434550542c20585858222c2267707369223a226d" +
-                            "7369736e646e2d3836313339303030303030303012222c2273" +
-                            "75626a656374223a7b227375627363726962657273223a7b22" +
-                            "696d7369223a2234363030373232303030313030303122227d" +
-                            "7d2c2275654970763441646472657373223a223130302e302e" +
-                            "302e31222c226e656564532d6e7373616922747275652c226e" +
-                            "65656432417574686e223a66616c73652c22646e6e223a2264" +
-                            "6e6e36303030303030303122"
-                        )
-                    
-                    # 组合HEADERS和DATA帧
-                    new_frame_data = header_frame + headers_block + data_frame
-                    
-                    # 记录处理结果
-                    logger.info(f"成功创建硬编码的第15号报文头部")
-                    logger.info(f"  :status: 201 字段 (值长度为3)")
-                    logger.info(f"  不包含 :scheme: http 字段")
-                    logger.info(f"  包含 content-length: 351 字段")
-                    logger.info(f"  新帧长度: {len(new_frame_data)} 字节")
-                    
-                    # 直接返回新创建的帧数据
-                    return new_frame_data
-                
-                except Exception as e:
-                    logger.error(f"硬编码HPACK处理失败: {e}")
-                    import traceback
-                    logger.error(traceback.format_exc())
-                
-                # 如果硬编码处理失败，回退到原来的HPACK方法
-                try:
-                    # 回退: 使用更鲁棒的HPACK解码方法
                     decoder = Decoder()
-                    try:
-                        headers = decoder.decode(frame_data)
-                    except Exception as decode_error:
-                        logger.warning(f"HPACK解码第15号报文的头部失败: {decode_error}，构造一个完整的头部集合")
-                        # 如果整体解码失败，构造一个完整的HTTP/2头部集合
-                        # 包含所有必要的伪头部和标准HTTP头部
-                        headers = [
-                            # 伪头部字段必须在普通头部之前
-                            (b':status', status_code),
-                            # 移除 :scheme: http 字段，符合要求
-                            
-                            # 普通HTTP头部
-                            (b'location', new_location_bytes),
-                            (b'content-type', content_type),
-                            # 移除server: SMF字段，与原始PCAP保持一致
-                            (b'date', b'Wed, 22 May 2025 02:48:05 GMT'),
-                            # 直接添加content-length字段，确保一定存在
-                            (b'content-length', b'351'),
-                        ]
-                        # 记录我们已经添加了content-length字段
-                        logger.info("根据原始PCAP格式，添加content-length: 351字段并移除server字段")
-                        
-                        # 记录所有头部字段，以便调试
-                        for name, value in headers:
-                            logger.info(f"第15号报文头部字段: {name}: {value}")
-                      # 分类收集头部：伪头部(pseudo-headers)必须在普通头部前面
-                    pseudo_headers = []  # 伪头部(以:开头的)
-                    normal_headers = []  # 普通头部
-                    has_status = False
-                    has_location = False
-                    has_content_type = False
-                    for name, value in headers:
-                        # 确保一致的字符串处理
-                        name_str = name.decode() if isinstance(name, bytes) else name
-                        name_lower = name_str.lower() if isinstance(name_str, str) else ""
-                        
-                        # 跳过content-length字段，稍后单独处理
-                        if isinstance(name_str, str) and name_lower == "content-length":
-                            continue
-                        
-                        # 处理不同类型的头部字段
-                        if isinstance(name_str, str):
-                            # 处理伪头部(以:开头)
-                            if name_str.startswith(':'):
-                                # 特殊处理:status字段
-                                if name_lower == ":status":
-                                    has_status = True
-                                    # 确保status值正确
-                                    if isinstance(value, bytes):
-                                        pseudo_headers.append((name, status_code))
-                                    else:
-                                        pseudo_headers.append((name, status_code.decode('utf-8', errors='ignore')))
-                                    logger.info(f"设置Status: {status_code}")
-                                else:
-                                    # 其他伪头部保持不变
-                                    pseudo_headers.append((name, value))
-                            # 处理location头部
-                            elif name_lower == "location":
-                                has_location = True
-                                # 创建新的location头部，保持与原始类型一致
-                                if isinstance(value, bytes):
-                                    normal_headers.append((name, new_location_bytes))
-                                else:
-                                    normal_headers.append((name, new_location))
-                                logger.info(f"设置Location: {new_location}")
-                            # 处理content-type头部
-                            elif name_lower == "content-type":
-                                has_content_type = True
-                                # 保留原始content-type或使用默认值
-                                if found_content_type:
-                                    if isinstance(value, bytes):
-                                        normal_headers.append((name, content_type))
-                                    else:
-                                        normal_headers.append((name, content_type.decode('utf-8', errors='ignore')))
-                                else:
-                                    normal_headers.append((name, value))
-                                logger.info(f"保留Content-Type: {content_type}")
-                            else:
-                                # 其他普通头部保持不变
-                                normal_headers.append((name, value))
-                        else:
-                            # 处理类型异常的情况
-                            normal_headers.append((name, value))
-                    
-                    # 合并头部，确保伪头部在前
-                    final_headers = pseudo_headers + normal_headers
-                    
-                    # 如果缺失关键字段，添加它们
-                    # 1. 添加status字段(如果缺失)
-                    if not has_status:
-                        status_key = ":status"
-                        status_value = status_code.decode('utf-8', errors='ignore')
-                        
-                        if any(isinstance(name, bytes) for name, _ in headers):
-                            status_key = b":status"
-                        
-                        if any(isinstance(value, bytes) for _, value in headers):
-                            status_value = status_code
-                        
-                        final_headers.insert(0, (status_key, status_value))
-                        logger.info(f"添加缺失的:status字段: {status_code}")
-                    
-                    # 2. 添加location字段(如果缺失)
-                    if not has_location:
-                        # 确保类型与其他头部一致
-                        location_key = "location"
-                        location_value = new_location
-                        
-                        if any(isinstance(name, bytes) for name, _ in headers):
-                            location_key = b"location"
-                        
-                        if any(isinstance(value, bytes) for _, value in headers):
-                            location_value = new_location_bytes
-                        
-                        final_headers.append((location_key, location_value))
-                        logger.info(f"添加缺失的location头部: {new_location}")
-                    
-                    # 如果发现了原始content-length，添加到最终头部（除非外部函数会处理）
-                    if original_content_length:
-                        content_length_key = "content-length"
-                        content_length_value = str(original_content_length)
-                        
-                        if any(isinstance(name, bytes) for name, _ in headers):
-                            content_length_key = b"content-length"
-                        
-                        if any(isinstance(value, bytes) for _, value in headers):
-                            content_length_value = str(original_content_length).encode()
-                        
-                        final_headers.append((content_length_key, content_length_value))
-                        logger.info(f"保留原始content-length值: {original_content_length}")
-                      # 编码最终头部
-                    encoder = Encoder()
-                    new_frame_data = encoder.encode(final_headers)
-                    
-                    # 验证生成的头部有效
-                    if len(new_frame_data) > 0:
-                        logger.info(f"成功通过HPACK方法重构第{pkt_idx}号报文的headers，新长度: {len(new_frame_data)}")
-                        return new_frame_data
-                    else:
-                        logger.warning("HPACK编码生成了空数据，创建一个基本的头部集合")
-                        # 如果编码失败，创建一个最简单但有效的HTTP/2头部集合
-                        try:
-                            # 创建基本的头部集合并编码 - 总是使用预定义的固定值确保一致性
-                            basic_headers = [
-                                # 伪头部字段必须在前面
-                                (b':status', status_code),  # 使用之前确定的值
-                                (b':scheme', b'http'),
-                                  # 标准HTTP头部
-                                (b'content-type', content_type),  # 使用之前确定的值
-                                (b'location', new_location_bytes),  # 使用之前构建的location
-                                # 移除server: SMF字段，与原始PCAP保持一致
-                                (b'date', b'Wed, 22 May 2025 02:48:05 GMT'),
-                                (b'content-length', b'351')  # 使用默认长度，会由外部函数更新
-                            ]
-                            encoder = Encoder()
-                            minimal_frame_data = encoder.encode(basic_headers)
-                            logger.info(f"创建了基本头部集合，长度: {len(minimal_frame_data)}")
-                            return minimal_frame_data
-                        except Exception as basic_err:
-                            logger.warning(f"创建基本头部集合失败: {basic_err}，将尝试二进制方法")
-                except Exception as e:
-                    logger.warning(f"HPACK方法处理第{pkt_idx}号报文头部失败: {e}，尝试恢复措施")
-                    try:
-                        # 紧急恢复：创建一个简单的头部集合
-                        # 确保包含所有必需的头部字段，不仅仅是标准字段
-                        # 修改顺序：先添加伪头部，然后是常规头部，content-length确保在最后添加
-                        emergency_headers = [
-                            # 伪头部字段 - 必须在最前面
-                            (b':status', b'201 Created'),
-                            (b':scheme', b'http'),
-                              # 常规HTTP头部
-                            (b'location', new_location_bytes),
-                            (b'content-type', b'application/json'),
-                            # 移除server字段，与原始PCAP保持一致
-                            (b'date', b'Wed, 22 May 2025 02:48:05 GMT'),
-                        ]
-                        
-                        # content-length总是最后添加，确保无论如何都添加此字段
-                        # 添加Content-Length如果存在
-                        if original_content_length:
-                            emergency_headers.append((b'content-length', str(original_content_length).encode()))
-                            logger.info(f"添加原始content-length值到紧急头部: {original_content_length}")
-                        else:
-                            emergency_headers.append((b'content-length', b'351'))  # 默认值
-                            logger.info(f"添加默认content-length值(351)到紧急头部")
-                            
-                        logger.info("紧急恢复头部集合：")
-                        for name, value in emergency_headers:
-                            logger.info(f"  {name}: {value}")
-                        encoder = Encoder()
-                        emergency_data = encoder.encode(emergency_headers)
-                        if len(emergency_data) > 0:
-                            logger.info(f"使用紧急恢复创建了头部，长度: {len(emergency_data)}")
-                            return emergency_data
-                        logger.warning("紧急恢复失败，将尝试二进制方法")
-                    except:
-                        logger.warning("所有HPACK尝试都失败，将尝试二进制方法")
-                
-                # 阶段2: 如果HPACK方法失败，使用更健壮的二进制处理方法
-                try:
-                    # 首先整理现有content-length字段（稍后由外部函数重设）
-                    # 根据需要移除或保留原始content-length
-                    preserve_content_length = True  # 如果外部会处理content-length，则改为False
-                    
-                    if not preserve_content_length:
-                        # 移除现有content-length，让外部函数设置
-                        content_lengths_removed = False
-                        for cl_pattern in [b'content-length:', b'Content-Length:', b'content-length: ', b'Content-Length: ']:
-                            pos = frame_data.find(cl_pattern)
-                            while pos >= 0:
-                                logger.info(f"找到content-length字段位置: {pos}，准备移除")
-                                # 找到整行范围
-                                line_start = max(0, frame_data.rfind(b'\n', 0, pos))
-                                if line_start > 0:
-                                    line_start += 1  # 跳过换行符
-                                line_end = frame_data.find(b'\n', pos)
-                                if line_end < 0:
-                                    line_end = len(frame_data)
-                                
-                                # 移除该行
-                                if pos >= 0 and line_end > pos:
-                                    line_content = frame_data[line_start:line_end]
-                                    frame_data = frame_data[:line_start] + frame_data[line_end:]
-                                    logger.info(f"移除了content-length行: {line_content}")
-                                    content_lengths_removed = True
-                                    # 由于数据长度变化，从头开始查找
-                                    pos = frame_data.find(cl_pattern)
-                                else:
-                                    # 继续查找下一个
-                                    pos = frame_data.find(cl_pattern, pos + 1)                    # 系统性处理location字段，使用增强的多层防御策略
+                    headers = decoder.decode(frame_data)
+                    modified = False
+                    new_headers = []
+                    content_length_found = False
                     location_found = False
                     
-                    # 策略1：使用扩展正则表达式搜索并替换完整URLs - 增强匹配能力
-                    url_patterns = [
-                        # 完整URL格式
-                        re.compile(br'(http://[\d\.]+(?::\d+)?/nsmf-pdusession/v1/pdu-sessions/\d+)'),
-                        # 分段URL格式
-                        re.compile(br'(http://[\d\.]+(?::\d+)?)/nsmf-pdusession/v1/pdu-sessions/(\d+)'),
-                        # 泛化URL格式
-                        re.compile(br'(http://[^/\s]+)(/nsmf-pdusession/v1/pdu-sessions/)(\d+)'),
-                        # 无协议前缀URL
-                        re.compile(br'([\d\.]+(?::\d+)?/nsmf-pdusession/v1/pdu-sessions/\d+)'),
-                        # 任意路径后跟ID的URL
-                        re.compile(br'(http://[\d\.]+(?::\d+)?)/[\w\-/]+?/(\d+)(?:\s|$)'),
-                        # 非标准但可识别的URL格式
-                        re.compile(br'location[:\s]*(http://[^\s\r\n]+)'),
-                    ]
-                    
-                    for pattern in url_patterns:
-                        match = pattern.search(frame_data)
-                        if match:
-                            groups = match.groups()
-                            if len(groups) == 1:  # 完整匹配
-                                old_url = match.group(0)
-                                logger.info(f"找到完整URL: {old_url}")
-                                frame_data = frame_data.replace(old_url, new_location_bytes)
-                                logger.info(f"直接替换URL: {old_url} -> {new_location_bytes}")
-                                location_found = True
-                                break
-                            elif len(groups) >= 2:  # 分组匹配
-                                old_url = match.group(0)
-                                if len(groups) == 2:
-                                    prefix = groups[0]
-                                    old_id = groups[1]
-                                else:  # 3组
-                                    prefix = groups[0]
-                                    path = groups[1]
-                                    old_id = groups[2]
-                                
-                                # 构建新URL并替换
-                                new_url = f"http://{auth1}/nsmf-pdusession/v1/pdu-sessions/{context_ID}".encode()
-                                frame_data = frame_data.replace(old_url, new_url)
-                                logger.info(f"智能替换URL: {old_url} -> {new_url}")
-                                location_found = True
-                                break
-                    
-                    # 策略2：如果没有找到完整URL，查找并替换location头部字段
-                    if not location_found:
-                        location_headers = [b'location:', b'Location:', b'location :', b'Location :', 
-                                           b'location=', b'Location=']
+                    # 处理现有头部
+                    for name, value in headers:
+                        name_str = name.decode() if isinstance(name, bytes) else name
                         
-                        for header in location_headers:
-                            pos = frame_data.find(header)
-                            if pos >= 0:
-                                # 找到位置后的值区域
-                                val_start = pos + len(header)
-                                
-                                # 确定值的结束位置（考虑多种分隔符）
-                                val_end = -1
-                                for end_marker in [b'\r\n', b'\n', b';', b',']:
-                                    end_pos = frame_data.find(end_marker, val_start)
-                                    if end_pos > 0 and (val_end < 0 or end_pos < val_end):
-                                        val_end = end_pos
-                                
-                                if val_end < 0:
-                                    val_end = len(frame_data)
-                                
-                                # 替换整个location行，保留原始格式
-                                old_line = frame_data[pos:val_end]
-                                # 确定合适的分隔符
-                                if b' ' in header or frame_data[val_start:val_start+1] == b' ':
-                                    new_line = header + b' ' + new_location_bytes
-                                else:
-                                    new_line = header + new_location_bytes
-                                
-                                frame_data = frame_data.replace(old_line, new_line)
-                                logger.info(f"替换location行: {old_line} -> {new_line}")
-                                location_found = True
-                                break
-                    
-                    # 策略3：无论前面是否成功，都替换所有可能的IP地址和session ID
-                    # 这确保了任何潜在的、未被前两个策略捕获的URL片段也会被更新
-                    
-                    # 替换IP和端口
-                    ip_port_patterns = [
-                        b'200.20.20.25:8080',
-                        b'200.20.20.25', 
-                        bytes([0x32, 0x30, 0x30, 0x2e, 0x32, 0x30, 0x2e, 0x32, 0x30, 0x2e, 0x32, 0x35])  # ASCII编码
-                    ]
-                    
-                    for pattern in ip_port_patterns:
-                        if pattern in frame_data:
-                            frame_data = frame_data.replace(pattern, auth1.encode())
-                            logger.info(f"替换IP/端口: {pattern} -> {auth1}")
-                    
-                    # 替换所有session ID
-                    session_patterns = [
-                        re.compile(b'/pdu-sessions/([0-9]+)'),
-                        re.compile(b'/nsmf-pdusession/v1/pdu-sessions/([0-9]+)')
-                    ]
-                    
-                    for pattern in session_patterns:
-                        match = pattern.search(frame_data)
-                        while match:  # 循环替换所有匹配
-                            old_id = match.group(1)
-                            if old_id != context_ID.encode():
-                                replacement = pattern.pattern.replace(br'([0-9]+)', context_ID.encode())
-                                frame_data = frame_data[:match.start()] + replacement + frame_data[match.end():]
-                                logger.info(f"替换session ID: {old_id.decode()} -> {context_ID}")
-                                # 继续查找，因为数据已变更，从头开始
-                                match = pattern.search(frame_data)
-                            else:
-                                # 找下一个
-                                match = pattern.search(frame_data, match.end())
-                      # 同样处理Content-Type头部，确保它是application/json
-                    content_type_found = False
-                    content_type_patterns = [
-                        b'content-type:', b'Content-Type:', 
-                        b'content-type: ', b'Content-Type: ',
-                        b'content-type=', b'Content-Type='
-                    ]
-                    
-                    for pattern in content_type_patterns:
-                        pos = frame_data.find(pattern)
-                        if pos >= 0:
-                            val_start = pos + len(pattern)
-                            val_end = -1
-                            
-                            # 确定值的结束位置
-                            for end_marker in [b'\r\n', b'\n', b';', b',']:
-                                end_pos = frame_data.find(end_marker, val_start)
-                                if end_pos > 0 and (val_end < 0 or end_pos < val_end):
-                                    val_end = end_pos
-                            
-                            if val_end < 0:
-                                val_end = len(frame_data)
-                            
-                            # 替换整个Content-Type行
-                            old_line = frame_data[pos:val_end]
-                            # 确定合适的分隔符
-                            if b' ' in pattern or frame_data[val_start:val_start+1] == b' ':
-                                new_line = pattern + b' ' + content_type
-                            else:
-                                new_line = pattern + content_type
-                            
-                            frame_data = frame_data.replace(old_line, new_line)
-                            logger.info(f"替换Content-Type: {old_line} -> {new_line}")
-                            content_type_found = True
-                            break
-                    
-                    # 如果没有找到Content-Type，尝试添加
-                    if not content_type_found:
-                        # 我们将与location一起添加Content-Type
-                        logger.info("未发现Content-Type字段，将与location一起添加")
-                    
-                    # 策略4：如果前面的方法没有找到location字段或content-type字段，尝试添加它们
-                    if not location_found or not content_type_found:
-                        logger.warning(f"未能找到或替换某些关键字段，尝试添加")
-                        
-                        # 查找最佳插入点
-                        insertion_points = []
-                        
-                        # 优先级1：在标准头部分隔符之前
-                        for marker in [b'\r\n\r\n', b'\n\n']:
-                            pos = frame_data.find(marker)
-                            if pos > 0:
-                                insertion_points.append((pos, 1))  # (位置, 优先级)
-                        
-                        # 优先级2：在任何已知头部字段之后
-                        for header in [b':status', b'content-type', b'date', b'server']:
-                            pos = frame_data.find(header)
-                            if pos > 0:
-                                line_end = frame_data.find(b'\n', pos)
-                                if line_end > 0:
-                                    insertion_points.append((line_end, 2))
-                        
-                        # 优先级3：在单换行符之前
-                        for marker in [b'\r\n', b'\n']:
-                            pos = frame_data.rfind(marker)
-                            if pos > 0:
-                                insertion_points.append((pos, 3))
-                        
-                        if insertion_points:
-                            # 按优先级排序
-                            insertion_points.sort(key=lambda x: x[1])
-                            insertion_point = insertion_points[0][0]
-                              # 根据现有格式决定使用什么分隔符
-                            uses_crlf = b'\r\n' in frame_data[:100]  # 检查前100字节以确定格式
-                            newline = b'\r\n' if uses_crlf else b'\n'
-                            
-                            # 准备要插入的头部
-                            headers_to_add = []
-                            
-                            # 添加Location头（如果需要）
-                            if not location_found:
-                                location_header = b'location: ' + new_location_bytes
-                                headers_to_add.append(location_header)
-                            
-                            # 添加Content-Type头（如果需要）
-                            if not content_type_found:
-                                content_type_header = b'content-type: ' + content_type
-                                headers_to_add.append(content_type_header)
-                            
-                            # 构建最终要插入的字符串
-                            if headers_to_add:
-                                headers_string = newline.join([b''] + headers_to_add)  # 确保每个头部前有换行符
-                                
-                                # 插入新头部字段
-                                frame_data = frame_data[:insertion_point] + headers_string + frame_data[insertion_point:]
-                                
-                                # 记录日志
-                                if not location_found:
-                                    logger.info(f"添加新location字段: {new_location}")
-                                    location_found = True
-                                if not content_type_found:
-                                    logger.info(f"添加新content-type字段: {content_type}")
-                                    content_type_found = True
-                      # 确保:status字段正确设置为201 Created
-                    status_found = False
-                    for status_pattern in [b':status:', b':status: ']:
-                        pos = frame_data.find(status_pattern)
-                        if pos >= 0:
-                            val_start = pos + len(status_pattern)
-                            val_end = -1
-                            
-                            # 找到值的结束位置
-                            for end_mark in [b'\r\n', b'\n', b';']:
-                                end_pos = frame_data.find(end_mark, val_start)
-                                if end_pos > 0 and (val_end < 0 or end_pos < val_end):
-                                    val_end = end_pos
-                            
-                            if val_end < 0:
-                                val_end = len(frame_data)
-                            
-                            # 替换状态码
-                            old_status = frame_data[val_start:val_end].strip()
-                            if old_status != b"201 Created":
-                                frame_data = frame_data.replace(
-                                    status_pattern + old_status,
-                                    status_pattern + b"201 Created"
-                                )
-                                logger.info(f"强制设置:status为'201 Created'，替换原值: {old_status}")
-                            status_found = True
-                            break
-                    
-                    # 如果没找到status，尝试添加
-                    if not status_found:
-                        # 尝试找到第一个伪头部字段来确定插入位置
-                        insert_pos = -1
-                        for pseudo_header in [b':scheme', b':method', b':path']:
-                            pos = frame_data.find(pseudo_header)
-                            if pos >= 0:
-                                insert_pos = pos
-                                break
-                        
-                        if insert_pos >= 0:
-                            # 根据现有格式确定换行符
-                            uses_crlf = b'\r\n' in frame_data[:100]
-                            newline = b'\r\n' if uses_crlf else b'\n'
-                            
-                            # 插入status字段
-                            status_header = b':status: 201 Created' + newline
-                            frame_data = frame_data[:insert_pos] + status_header + frame_data[insert_pos:]
-                            logger.info("添加缺失的:status字段: 201 Created")
+                        # 处理location字段
+                        if name_str.lower() == "location":
+                            new_headers.append((name, new_location_bytes if isinstance(name, bytes) else new_location))
+                            logger.info(f"替换location: {value} -> {new_location}")
+                            location_found = True
+                            modified = True
+                        # 检查content-length字段
+                        elif name_str.lower() == "content-length":
+                            content_length_found = True
+                            # 获取实际DATA帧长度，但在这里我们不知道，所以保留原值
+                            new_headers.append((name, value))
                         else:
-                            # 如果找不到合适的插入点，尝试在头部开始位置插入
-                            uses_crlf = b'\r\n' in frame_data[:100]
-                            newline = b'\r\n' if uses_crlf else b'\n'
-                            
-                            status_header = b':status: 201 Created' + newline
-                            frame_data = status_header + frame_data
-                            logger.info("在头部开始处添加:status字段: 201 Created")
+                            new_headers.append((name, value))
                     
-                    # 最终检查：验证是否成功添加所有必要的头部字段
-                    final_checks = [
-                        (b':status:', "status"),
-                        (b'location:', "location"),
-                        (b'content-type:', "content-type")
-                    ]
+                    # 如果没有location字段，添加一个
+                    if not location_found:
+                        location_key = b"location" if any(isinstance(name, bytes) for name, _ in headers) else "location"
+                        location_val = new_location_bytes if any(isinstance(val, bytes) for _, val in headers) else new_location
+                        new_headers.append((location_key, location_val))
+                        logger.info(f"添加缺失的location字段: {new_location}")
+                        modified = True
                     
-                    for pattern, field_name in final_checks:
-                        if pattern.lower() not in frame_data.lower():
-                            logger.warning(f"所有尝试后仍未能确保第{pkt_idx}号报文有正确的{field_name}字段")
-                    
-                    return frame_data
-                    
+                    if modified:
+                        encoder = Encoder()
+                        new_data = encoder.encode(new_headers)
+                        logger.info(f"成功修改第15号报文的headers，新长度: {len(new_data)}")
+                        return new_data
                 except Exception as e:
-                    logger.error(f"二进制方法处理第{pkt_idx}号报文头部失败: {e}")
-                    import traceback
-                    logger.error(traceback.format_exc())
-                    # 返回原始数据，确保不会因处理失败而丢失数据
-                    return frame_data
-                    
+                    logger.error(f"解码第15号报文头部失败: {e}，将使用二进制替换方法")
+                
+                # 如果解码失败，使用二进制替换方法
+                # 直接查找和替换所有可能的URL模式
+                url_pattern = re.compile(b'(http://[0-9.]+(?::[0-9]+)?/nsmf-pdusession/v1/pdu-sessions/[0-9]+)')
+                match = url_pattern.search(frame_data)
+                if match:
+                    old_url = match.group(0)
+                    frame_data = frame_data.replace(old_url, new_location_bytes)
+                    logger.info(f"二进制替换URL: {old_url} -> {new_location_bytes}")
+                
+                # 尝试查找并替换location头
+                location_headers = [b'location:', b'Location:', b'location :', b'Location :']
+                for header in location_headers:
+                    pos = frame_data.find(header)
+                    if pos >= 0:
+                        # 找到位置后的值
+                        val_start = pos + len(header)
+                        val_end = frame_data.find(b'\r\n', val_start)
+                        if val_end < 0:
+                            val_end = len(frame_data)
+                        
+                        # 替换整个location行
+                        old_line = frame_data[pos:val_end]
+                        new_line = header + b' ' + new_location_bytes
+                        frame_data = frame_data.replace(old_line, new_line)
+                        logger.info(f"替换location行: {old_line} -> {new_line}")
+                        break
+                
+                # 如果没有找到location，添加一个
+                if all(header not in frame_data for header in location_headers):
+                    # 查找合适的插入点
+                    for marker in [b'\r\n\r\n', b'\r\n']:
+                        pos = frame_data.rfind(marker)
+                        if pos > 0:
+                            location_header = b'location: ' + new_location_bytes + b'\r\n'
+                            frame_data = frame_data[:pos] + location_header + frame_data[pos:]
+                            logger.info(f"添加location头: {location_header}")
+                            break
+                
+                return frame_data
+                
             # 保留原有的处理逻辑
             elif pkt_idx == 11:
                 logger.info(f"特殊处理第{pkt_idx}号报文")
@@ -1260,7 +621,8 @@ def process_special_headers(frame_data, pkt_idx):
                         pos = frame_data.find(auth_marker)
                         if pos >= 0:
                             val_start = pos + len(auth_marker)
-                            val_end = val_start                            # 找到值的结束位置
+                            val_end = val_start
+                            # 找到值的结束位置
                             while val_end < len(frame_data) and not (frame_data[val_end:val_end+1] in [b'\r', b'\n', b';', b':', b' ']):
                                 val_end += 1
                             
@@ -1307,13 +669,13 @@ def process_special_headers(frame_data, pkt_idx):
                                 pos = frame_data.find(marker, val_start)
                                 if pos > 0 and (val_end == -1 or pos < val_end):
                                     val_end = pos
-                        
+                            
                             if val_end < 0:
                                 # 如果找不到明确的结束，使用下一个冒号位置
                                 val_end = frame_data.find(b':', val_start + 1)
                                 if val_end < 0:
                                     val_end = val_start + 20  # 安全限制
-                        
+                            
                             # 强制替换值
                             frame_data = frame_data[:val_start+1] + b' ' + auth1.encode() + frame_data[val_end:]
                             logger.info(f"强制二进制替换第{pkt_idx}号报文的:authority值为: {auth1}")
@@ -1372,6 +734,155 @@ def process_special_headers(frame_data, pkt_idx):
                     frame_data = new_headers_data + frame_data
                     logger.info(f"为第{pkt_idx}号报文创建了全新的头部块，包含authority: {auth1}")
                     return frame_data
+            elif pkt_idx == 15:
+                logger.info(f"特殊处理第15号报文 - 强化location和content-length处理")
+                
+                # 尝试找到location字段 - 更全面的匹配模式
+                possible_patterns = [
+                    b'location:', 
+                    b'Location:',
+                    b'location :', 
+                    b'Location :',
+                ]
+                
+                # 构建新的location值 - 注意：使用auth1而不是sip1确保与:authority一致
+                new_location = f"http://{auth1}:80/nsmf-pdusession/v1/pdu-sessions/{context_ID}"
+                new_location_bytes = new_location.encode()
+                
+                # 检查和处理content-length字段 - 先移除旧的，后面会重新添加
+                for cl_pattern in [b'content-length:', b'Content-Length:', b'content-length: ', b'Content-Length: ']:
+                    pos = frame_data.find(cl_pattern)
+                    if pos >= 0:
+                        logger.info(f"找到content-length字段位置: {pos}，先移除它")
+                        # 找到这一行的开始和结束
+                        line_start = max(0, frame_data.rfind(b'\n', 0, pos))
+                        line_end = frame_data.find(b'\n', pos)
+                        if line_end < 0:
+                            line_end = len(frame_data)
+                        # 移除整行
+                        if line_start >= 0 and line_end > line_start:
+                            frame_data = frame_data[:line_start] + frame_data[line_end:]
+                            logger.info(f"移除旧的content-length字段")
+                            break
+                
+                # 优先处理：直接查找并替换HTTP URI
+                uri_pattern = re.compile(br'http://[\d\.]+(?::\d+)?/nsmf-pdusession/v1/pdu-sessions/\d+')
+                match = uri_pattern.search(frame_data)
+                if match:
+                    old_uri = match.group(0)
+                    logger.info(f"找到完整URL: {old_uri}")
+                    frame_data = frame_data.replace(old_uri, new_location_bytes)
+                    logger.info(f"直接替换URL: {old_uri} -> {new_location_bytes}")
+                    location_found = True
+                else:
+                    # 如果找不到完整URL，尝试定位location头部
+                    location_found = False
+                    for pattern in possible_patterns:
+                        loc_pos = frame_data.find(pattern)
+                        if loc_pos >= 0:
+                            logger.info(f"找到location字段位置: {loc_pos}")
+                            location_found = True
+                            # 尝试查找URI部分并替换
+                            value_start = loc_pos + len(pattern)
+                            
+                            # 找到原始URI的结束位置 - 更全面的边界检测
+                            end_markers = [b'\r\n', b';', b'\x00', b'\n', b':']
+                            next_header = -1
+                            for marker in end_markers:
+                                pos = frame_data.find(marker, value_start)
+                                if pos > 0 and (next_header == -1 or pos < next_header):
+                                    next_header = pos
+                            
+                            if next_header < 0:
+                                next_header = len(frame_data)
+                            
+                            # 获取当前URI值
+                            current_uri = frame_data[value_start:next_header].strip()
+                            if current_uri:
+                                logger.info(f"当前location URI: {current_uri}")
+                            
+                            # 替换整个URI，确保使用新值
+                            new_frame_data = frame_data[:value_start] + b' ' + new_location_bytes + frame_data[next_header:]
+                            logger.info(f"替换location URI为: {new_location}")
+                            frame_data = new_frame_data
+                            break
+                
+                # 直接尝试替换整个location头字段及其值
+                if not location_found:
+                    # 可能的完整location头格式
+                    complete_patterns = [
+                        b'location: http://', 
+                        b'Location: http://',
+                        b'location:http://', 
+                        b'Location:http://'
+                    ]
+                    
+                    for pattern in complete_patterns:
+                        loc_pos = frame_data.find(pattern)
+                        if loc_pos >= 0:
+                            logger.info(f"找到完整location头部开始位置: {loc_pos}")
+                            # 找uri的结束位置
+                            uri_end = -1
+                            for end_marker in [b'\r\n', b';', b'\n']:
+                                pos = frame_data.find(end_marker, loc_pos + len(pattern))
+                                if pos > 0 and (uri_end == -1 or pos < uri_end):
+                                    uri_end = pos
+                            
+                            if uri_end < 0:
+                                uri_end = len(frame_data)
+                            
+                            # 替换整个location header + value
+                            header_prefix = pattern[:pattern.find(b'http://')]
+                            new_frame_data = frame_data[:loc_pos] + header_prefix + new_location_bytes + frame_data[uri_end:]
+                            logger.info(f"替换整个location头部及值为: {header_prefix + new_location_bytes}")
+                            frame_data = new_frame_data
+                            location_found = True
+                            break
+                
+                # 使用更激进的方式：直接搜索并替换常见URL模式
+                if not location_found:
+                    # 尝试匹配完整的URL模式
+                    url_pattern = re.compile(b'(http://[0-9.]+(?::[0-9]+)?/nsmf-pdusession/v1/pdu-sessions/[0-9]+)')
+                    match = url_pattern.search(frame_data)
+                    if match:
+                        old_url = match.group(0)
+                        logger.info(f"找到完整URL模式: {old_url}")
+                        frame_data = frame_data.replace(old_url, new_location_bytes)
+                        logger.info(f"替换URL: {old_url} -> {new_location_bytes}")
+                        location_found = True
+                
+                # 最后尝试：使用更激进的方式直接替换IP和端口
+                if not location_found:
+                    patterns_to_replace = [
+                        b'200.20.20.25:8080',
+                        b'200.20.20.25', 
+                        bytes([0x32, 0x30, 0x30, 0x2e, 0x32, 0x30, 0x2e, 0x32, 0x30, 0x2e, 0x32, 0x35])
+                    ]
+                    
+                    # 应用所有替换
+                    temp_data = frame_data
+                    for pattern in patterns_to_replace:
+                        temp_data = binary_replace(temp_data, pattern, sip1.encode())
+                    
+                    if temp_data != frame_data:
+                        logger.info(f"通过二进制IP替换修改了第{pkt_idx}个报文中的URI")
+                        frame_data = temp_data
+                        location_found = True
+                
+                # 替换session ID
+                session_pattern = re.compile(b'/pdu-sessions/([0-9]+)')
+                match = session_pattern.search(frame_data)
+                if match:
+                    old_id = match.group(1)
+                    if old_id != context_ID.encode():
+                        new_path = session_pattern.sub(f'/pdu-sessions/{context_ID}'.encode(), frame_data)
+                        logger.info(f"替换session ID: {old_id} -> {context_ID}")
+                        frame_data = new_path
+                
+                if not location_found:
+                    logger.warning(f"第{pkt_idx}个报文未能修改location字段")
+                
+                return frame_data
         
         # 对于其他报文使用标准hpack解析方法
         decoder = Decoder()
@@ -1425,41 +936,20 @@ def process_special_headers(frame_data, pkt_idx):
                         new_headers.append((name, value))
                 else:
                     new_headers.append((name, value))
-          # 第15包的特殊处理：完全修复三个关键问题
+        
+        # 第15包的特殊处理：修改location字段
         elif pkt_idx == 15:
-            # 移除:scheme字段
-            scheme_removed = False
-            
             for name, value in headers:
                 name_str = name.decode() if isinstance(name, bytes) else name
                 
-                # 跳过:scheme字段，实现需求2：删除 :scheme: http 字段
-                if name_str == ":scheme":
-                    logger.info(f"移除:scheme字段: {value}")
-                    scheme_removed = True
-                    continue
-                
-                # 处理:status字段，确保值为"201"而不是"201 Created"
-                elif name_str == ":status":
-                    # 确保:status值仅为"201"，实现需求1
-                    new_status = "201"
-                    if isinstance(value, bytes):
-                        new_status = b"201"
-                    if value != new_status:
-                        logger.info(f"修改:status值: {value} -> {new_status}")
-                        new_headers.append((name, new_status))
-                        modified = True
-                    else:
-                        new_headers.append((name, value))
-                
                 # 处理location字段
-                elif name_str.lower() == "location" if isinstance(name_str, str) else False:
+                if name_str.lower() == "location" if isinstance(name_str, str) else False:
                     value_str = value.decode() if isinstance(value, bytes) else value
                     # 对于字符串类型的值使用正则表达式匹配
                     if isinstance(value_str, str):
                         url_match = re.match(r"(http://)[\d\.]+:\d+(.*)", value_str)
                         if url_match:
-                            new_loc = f"{url_match.group(1)}{sip1}/nsmf-pdusession/v1/pdu-sessions/{context_ID}"
+                            new_loc = f"{url_match.group(1)}{sip1}:80{url_match.group(2)}"
                             if new_loc != value_str:
                                 if isinstance(value, bytes):
                                     new_headers.append((name, new_loc.encode()))
@@ -1472,38 +962,6 @@ def process_special_headers(frame_data, pkt_idx):
                     new_headers.append((name, value))
                 else:
                     new_headers.append((name, value))
-            
-            # 添加content-length字段，实现需求3
-            content_length_found = False
-            for name, value in headers:
-                name_str = name.decode() if isinstance(name, bytes) else name
-                if name_str.lower() == "content-length":
-                    content_length_found = True
-                    break
-            
-            if not content_length_found:
-                # 添加缺失的content-length字段
-                content_length_key = "content-length"
-                content_length_value = "351"
-                
-                if any(isinstance(name, bytes) for name, _ in headers):
-                    content_length_key = b"content-length"
-                
-                if any(isinstance(value, bytes) for _, value in headers):
-                    content_length_value = b"351"
-                
-                new_headers.append((content_length_key, content_length_value))
-                logger.info(f"添加缺失的content-length字段: {content_length_value}")
-                modified = True
-            
-            # 记录修复结果
-            if scheme_removed:
-                logger.info("成功移除:scheme: http字段")
-            
-            logger.info(f"第15号报文处理结果:")
-            logger.info(f"  :status 字段值长度为3，值为'201'")
-            logger.info(f"  :scheme: http 字段{'已移除' if scheme_removed else '未发现'}")
-            logger.info(f"  content-length: 351 字段{'已添加' if not content_length_found else '已存在'}")
         
         # 检查是否需要添加缺失的authority字段（针对第11和13号报文）
         if pkt_idx in {11, 13} and not has_authority:
@@ -1581,7 +1039,7 @@ def update_content_length(headers_data, body_length):
                                 break
                         
                         if line_end > val_start:
-                            # 移除整行
+                            # 移除整行content-length
                             modified_data = modified_data[:pattern_pos] + modified_data[line_end:]
                             logger.info("通过二进制方式移除了content-length字段")
                             # 由于数据已修改，重新从头开始查找
@@ -1737,22 +1195,7 @@ def update_content_length(headers_data, body_length):
             return headers_data
         except Exception as e:
             logger.error(f"HPACK处理Content-Length错误: {e}")
-            logger.error(traceback.format_exc())          # 检查是否处理的是第15个包（不添加server字段）
-        # 不需要为任何包添加server字段，第15个包尤其要确保没有server字段
-        # 如果pkt_idx可用，可以使用它检查是否是第15个包
-        current_pkt_idx = -1
-        pkt_idx_str = ""
-        
-        # 尝试从相关调用堆栈中获取pkt_idx
-        import inspect
-        for frame_info in inspect.stack():
-            frame = frame_info.frame
-            if 'pkt_idx' in frame.f_locals:
-                current_pkt_idx = frame.f_locals['pkt_idx']
-                pkt_idx_str = f"第{current_pkt_idx}号包"
-                break
-        
-        logger.info(f"{pkt_idx_str}处理content-length，不添加server字段")
+            logger.error(traceback.format_exc())
         
         # 多重安全措施: 如果其他所有方法都失败，尝试强制在多个位置添加content-length字段
         if b'content-length' not in headers_data.lower() and b'Content-Length' not in headers_data:
@@ -1764,8 +1207,8 @@ def update_content_length(headers_data, body_length):
                 if pos > 0:
                     insert_positions.append((pos, 1))  # 权重高
 
-            # 其次在知名头部字段后添加，优先在server字段后添加
-            for header_name in [b'server', b'Server', b':status', b':path', b'location', b'date']:
+            # 其次在知名头部字段后添加
+            for header_name in [b':status', b':path', b'location', b'date', b'server']:
                 pos = headers_data.find(header_name)
                 if pos > 0:
                     line_end = -1
@@ -1840,7 +1283,7 @@ def apply_direct_binary_replacements(pkt, idx):
     # 全局IP和端口替换模式
     ip_replacements = [
         # 常规文本形式
-        (b'200.20.20.25:8080', f"{auth1}".encode()),
+        (b'200.20.20.25:8080', f"{auth1}:80".encode()),
         (b'200.20.20.25', auth1.encode()),
         # ASCII编码形式
         (bytes([0x32, 0x30, 0x30, 0x2e, 0x32, 0x30, 0x2e, 0x32, 0x30, 0x2e, 0x32, 0x35]), auth1.encode()),
@@ -1910,7 +1353,7 @@ def apply_direct_binary_replacements(pkt, idx):
                 uri_val = load[val_start:val_end].strip()
                 if uri_val and b'http://' in uri_val:
                     # 构建完整替换
-                    new_uri = f"http://{sip1}/nsmf-pdusession/v1/pdu-sessions/{context_ID}".encode()
+                    new_uri = f"http://{sip1}:80/nsmf-pdusession/v1/pdu-sessions/{context_ID}".encode()
                     location_patterns.append((header + b' ' + uri_val, header + b' ' + new_uri))
         
         # 2. 直接查找完整URL
@@ -1927,7 +1370,7 @@ def apply_direct_binary_replacements(pkt, idx):
                 old_url = match.group(0)
                 if b'/pdu-sessions/' in old_url:
                     if b'http://' in old_url:
-                        new_url = f"http://{sip1}/nsmf-pdusession/v1/pdu-sessions/{context_ID}".encode()
+                        new_url = f"http://{sip1}:80/nsmf-pdusession/v1/pdu-sessions/{context_ID}".encode()
                     else:
                         new_url = f"/nsmf-pdusession/v1/pdu-sessions/{context_ID}".encode()
                     location_patterns.append((old_url, new_url))
@@ -1979,12 +1422,13 @@ def apply_direct_binary_replacements(pkt, idx):
     return modified
 
 def main():
-    """主处理流程"""    # 解析命令行参数
+    """主处理流程"""
+    # 解析命令行参数
     import argparse
     parser = argparse.ArgumentParser(description='处理N16 PCAP文件中的HTTP/2帧')
     parser.add_argument('-i', '--input', dest='input_file', default="pcap/N16_create_16p.pcap",
                        help='输入PCAP文件路径')
-    parser.add_argument('-o', '--output', dest='output_file', default="pcap/N16_1621.pcap",
+    parser.add_argument('-o', '--output', dest='output_file', default="pcap/N16_1436.pcap",
                        help='输出PCAP文件路径')
     
     args = parser.parse_args()
@@ -2013,17 +1457,9 @@ def main():
         
         logger.debug(f"处理第{idx}个报文")        # 处理目标报文
         if idx in target_pkts and pkt.haslayer(TCP) and pkt.haslayer(Raw):
-            logger.info(f"特殊处理第{idx}个报文")            # 对第15号报文进行常规处理（回退到N16_1515.pcap版本，移除硬编码处理）
-            if idx == 15:
-                logger.info(f"处理第{idx}个报文（回退版本，无硬编码处理）")
-                
-                # 对该报文进行常规处理
-                direct_modified = apply_direct_binary_replacements(pkt, idx)
-                
-                # 获取可能已修改的原始负载
-                raw = bytes(pkt[Raw].load)
+            logger.info(f"特殊处理第{idx}个报文")
             
-            # 对其他报文进行常规处理
+            # 先尝试直接在原始负载上进行二进制替换（第一阶段）
             direct_modified = apply_direct_binary_replacements(pkt, idx)
             
             # 获取可能已修改的原始负载
@@ -2144,7 +1580,7 @@ def main():
                                                     break
                                             
                                             if val_end > val_start:
-                                                # 移除整行
+                                                # 删除整个content-length行
                                                 frame_data = frame_data[:pattern_pos] + frame_data[val_end:]
                                                 logger.info(f"第15号报文：移除现有的content-length字段")
                                                 pattern_removed = True
@@ -2160,7 +1596,7 @@ def main():
                                                         break
                                                 
                                                 if val_end > val_start:
-                                                    # 移除字段值部分
+                                                    # 删除字段值部分
                                                     frame_data = frame_data[:pattern_pos] + frame_data[val_end:]
                                                     logger.info(f"第15号报文：移除不完整的content-length字段")
                                                     pattern_removed = True
@@ -2168,63 +1604,30 @@ def main():
                                                     pattern_pos = frame_data.lower().find(cl_pattern.lower())
                                                 else:
                                                     # 继续查找下一个匹配位置
-                                                    pattern_pos = frame_data.lower().find(cl_pattern.lower(), pattern_pos + 1)                                            # 使用HPACK解码/编码方式清理，但确保保留server字段
+                                                    pattern_pos = frame_data.lower().find(cl_pattern.lower(), pattern_pos + 1)
+                                    
+                                    # 使用HPACK解码/编码方式清理
                                     if not pattern_removed:
                                         try:
                                             decoder = Decoder()
                                             encoder = Encoder()
                                             headers = decoder.decode(frame_data)
-                                            
-                                            # 记录所有原始头部字段
-                                            logger.info("第15号报文：原始头部字段：")
-                                            for name, value in headers:
-                                                name_str = name.decode() if isinstance(name, bytes) else name
-                                                value_str = value.decode() if isinstance(value, bytes) else value
-                                                logger.info(f"  {name_str}: {value_str}")
-                                            
                                             new_headers = []
                                             cl_removed = False
-                                            has_server = False
-                                            
-                                            # 检查是否包含server字段
-                                            for name, value in headers:
-                                                name_str = name.decode() if isinstance(name, bytes) else name
-                                                if isinstance(name_str, str) and name_str.lower() == "server":
-                                                    has_server = True
-                                                    break
                                             
                                             for name, value in headers:
                                                 name_str = name.decode() if isinstance(name, bytes) else name
-                                                # 保留content-length字段，但记录下来以便稍后可能需要更新
+                                                # 过滤掉所有content-length字段
                                                 is_content_length = isinstance(name_str, str) and name_str.lower() == "content-length"
                                                 if is_content_length:
-                                                    cl_removed = True                                                    # 保留原始content-length
-                                                    new_headers.append((name, value))
-                                                    logger.info(f"第15号报文：保留content-length值: {value}")
-                                                else:
-                                                    new_headers.append((name, value))
-                                              # 检查是否是第15个包，对于第15个包，我们不添加server字段
-                                            if not has_server and pkt_idx != 15:
-                                                logger.info(f"第{pkt_idx}号报文：添加缺失的server字段")
-                                                new_headers.append((b'server', b'SMF'))
-                                            elif pkt_idx == 15:
-                                                logger.info("第15号报文：按照要求不添加server字段")
-                                            
-                                            # 如果没有content-length字段，添加一个
-                                            if not cl_removed:
-                                                logger.info("第15号报文：添加缺失的content-length字段")
-                                                new_headers.append((b'content-length', b'351'))
+                                                    cl_removed = True
+                                                    continue
+                                                new_headers.append((name, value))
                                             
                                             if cl_removed:
                                                 frame_data = encoder.encode(new_headers)
                                                 logger.info(f"第15号报文：通过HPACK移除content-length字段")
                                                 pre_cleaned_frames = True
-                                                # 记录处理后的头部
-                                                logger.info("第15号报文：移除content-length后的头部字段：")
-                                                for name, value in new_headers:
-                                                    name_str = name.decode() if isinstance(name, bytes) else name
-                                                    value_str = value.decode() if isinstance(value, bytes) else value
-                                                    logger.info(f"  {name_str}: {value_str}")
                                         except Exception as e:
                                             logger.warning(f"HPACK清理content-length字段失败: {e}")
                                 except Exception as e:
@@ -2252,9 +1655,11 @@ def main():
                                     pattern_pos = new_frame_data.lower().find(cl_pattern.lower())
                                     if pattern_pos >= 0:
                                         content_length_added = True
-                                          # 验证值是否正确
+                                        
+                                        # 验证值是否正确
                                         val_start = pattern_pos + len(cl_pattern)
                                         val_end = -1
+                                        
                                         for end_marker in [b'\r\n', b'\n', b';', b',', b' ', b'\t']:
                                             end_pos = new_frame_data.find(end_marker, val_start)
                                             if end_pos > 0:
@@ -2276,47 +1681,12 @@ def main():
                                     frame_header.length = len(new_frame_data)
                                     frames[hdr_idx] = (frame_header, frame_type, new_frame_data, start_offset, start_offset + 9 + len(new_frame_data))
                                     modified = True
-                                  # 如果值不正确或没有添加成功，尝试直接插入
+                                
+                                # 如果值不正确或没有添加成功，尝试直接插入
                                 if not content_length_correct:
                                     logger.warning("第15号报文：常规添加content-length失败或值不正确，尝试直接插入")
-                                      # 对于第15号报文，根据要求不添加server字段
-                                    # 检查是否存在server字段，如果存在，需要删除
-                                    server_exists = b'server:' in new_frame_data.lower() or b'Server:' in new_frame_data
-                                    if server_exists:
-                                        logger.info("第15号报文：检测到server字段，需要删除它")
-                                        # 尝试删除server字段
-                                        try:
-                                            pattern_removed = False
-                                            for server_pattern in [b'server:', b'Server:', b'server: ', b'Server: ']:
-                                                pattern_pos = new_frame_data.lower().find(server_pattern.lower())
-                                                while pattern_pos >= 0:
-                                                    # 找到了server字段
-                                                    val_start = pattern_pos + len(server_pattern)
-                                                    line_end = -1
-                                                    
-                                                    # 找到行尾
-                                                    for end_mark in [b'\r\n', b'\n']:
-                                                        end_pos = new_frame_data.find(end_mark, val_start)
-                                                        if end_pos > 0:
-                                                            line_end = end_pos + len(end_mark)
-                                                            break
-                                                    
-                                                    if line_end > val_start:
-                                                        # 移除整行
-                                                        new_frame_data = new_frame_data[:pattern_pos] + new_frame_data[line_end:]
-                                                        logger.info("第15号报文：成功删除server字段")
-                                                        pattern_removed = True
-                                                        # 由于数据已修改，重新从头开始查找
-                                                        pattern_pos = new_frame_data.lower().find(server_pattern.lower())
-                                                    else:
-                                                        # 继续查找下一个匹配位置
-                                                        pattern_pos = new_frame_data.lower().find(server_pattern.lower(), pattern_pos + 1)
-                                        except Exception as e:
-                                            logger.error(f"删除server字段时出错: {e}")
-                                    else:
-                                        logger.info("第15号报文：未检测到server字段，符合要求")
                                     
-                                    # 先尝试在头部区域末尾插入content-length
+                                    # 先尝试在头部区域末尾插入
                                     insert_pos = -1
                                     for marker in [b'\r\n\r\n', b'\n\n', b'\r\n', b'\n']:
                                         pos = new_frame_data.rfind(marker)
@@ -2333,11 +1703,6 @@ def main():
                                         frames[hdr_idx] = (frame_header, frame_type, newer_frame_data, start_offset, start_offset + 9 + len(newer_frame_data))
                                         logger.info(f"第15号报文：在插入点 {insert_pos} 强制添加content-length: {new_data_len}")
                                         modified = True
-                                        
-                                        # 验证添加后确实包含所有所需字段
-                                        has_cl = b'content-length:' in newer_frame_data.lower() 
-                                        has_server = b'server:' in newer_frame_data.lower()
-                                        logger.info(f"第15号报文：验证字段 - Content-Length: {has_cl}, Server: {has_server}")
                                     else:
                                         # 若找不到插入点，直接附加到末尾
                                         cl_header = b'\r\ncontent-length: ' + str(new_data_len).encode()
@@ -2348,11 +1713,6 @@ def main():
                                         frames[hdr_idx] = (frame_header, frame_type, newer_frame_data, start_offset, start_offset + 9 + len(newer_frame_data))
                                         logger.info(f"第15号报文：在末尾强制添加content-length: {new_data_len}")
                                         modified = True
-                                        
-                                        # 验证添加后确实包含所有所需字段
-                                        has_cl = b'content-length:' in newer_frame_data.lower() 
-                                        has_server = b'server:' in newer_frame_data.lower()
-                                        logger.info(f"第15号报文：验证字段 - Content-Length: {has_cl}, Server: {has_server}")
                                 
                             # 作为双重保险，检查修改后的报文是否包含正确的content-length
                             content_length_correct = False
@@ -2390,6 +1750,7 @@ def main():
                             # 如果所有尝试都失败，最后一招：使用外部工具
                             if not content_length_correct and modified:
                                 logger.warning("第15号报文：所有尝试都未能正确设置content-length，考虑使用外部工具")
+                                # 这里不立即调用外部工具，而是记录警告，让用户知晓可能需要额外处理
                     else:
                         # 如果找不到content-length字段，尝试在所有HEADERS帧中添加
                         for frame_idx, (frame_header, frame_type, frame_data, start_offset, end_offset) in enumerate(frames):

@@ -6,6 +6,7 @@ import traceback
 import os
 import argparse
 from hpack import Decoder, Encoder
+import sys
 
 # 配置日志记录器
 logging.basicConfig(
@@ -17,6 +18,82 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+def apply_fix_to_file(filepath):
+    """
+    修复n16_test_fixed02.py文件中处理第15号报文content-length的问题
+    """
+    # 读取原文件
+    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+        content = f.read()
+
+    # 查找需要替换的部分 - 关键是修改"过滤掉所有content-length字段"的逻辑
+    pattern1 = r"""                                            for name, value in headers:
+                                                name_str = name.decode\(\) if isinstance\(name, bytes\) else name
+                                                # 过滤掉所有content-length字段
+                                                is_content_length = isinstance\(name_str, str\) and name_str\.lower\(\) == "content-length"
+                                                if is_content_length:
+                                                    cl_removed = True
+                                                    continue
+                                                new_headers\.append\(\(name, value\)\)"""
+    
+    replacement1 = """                                            for name, value in headers:
+                                                name_str = name.decode() if isinstance(name, bytes) else name
+                                                # 保留content-length字段，但记录下来以便稍后可能需要更新
+                                                is_content_length = isinstance(name_str, str) and name_str.lower() == "content-length"
+                                                if is_content_length:
+                                                    cl_removed = True
+                                                    # 保留原始content-length
+                                                    new_headers.append((name, value))
+                                                    logger.info(f"第15号报文：保留content-length值: {value}")
+                                                else:
+                                                    new_headers.append((name, value))"""
+    
+    # 执行替换
+    new_content = re.sub(pattern1, replacement1, content)
+    
+    # 查找第二个需要替换的部分 - 修改紧急恢复中添加content-length的逻辑
+    pattern2 = r"""                        # 添加Content-Length如果存在
+                        if original_content_length:
+                            emergency_headers\.append\(\(b'content-length', str\(original_content_length\)\.encode\(\)\)\)
+                        else:
+                            emergency_headers\.append\(\(b'content-length', b'351'\)\)  # 默认值"""
+    
+    replacement2 = """                        # 添加Content-Length如果存在
+                        if original_content_length:
+                            emergency_headers.append((b'content-length', str(original_content_length).encode()))
+                            logger.info(f"添加原始content-length值到紧急头部: {original_content_length}")
+                        else:
+                            emergency_headers.append((b'content-length', b'351'))  # 默认值
+                            logger.info(f"添加默认content-length值(351)到紧急头部")"""
+    
+    # 执行第二个替换
+    new_content = re.sub(pattern2, replacement2, new_content)
+
+    # 添加第三处替换，确保在HPACK处理后的content-length不被移除
+    pattern3 = r"""                                            if not has_server:
+                                                logger\.info\("第15号报文：添加缺失的server字段"\)
+                                                new_headers\.append\(\(b'server', b'SMF'\)\)"""
+    
+    replacement3 = """                                            if not has_server:
+                                                logger.info("第15号报文：添加缺失的server字段")
+                                                new_headers.append((b'server', b'SMF'))
+                                            
+                                            # 如果没有content-length字段，添加一个
+                                            if not cl_removed:
+                                                logger.info("第15号报文：添加缺失的content-length字段")
+                                                new_headers.append((b'content-length', b'351'))"""
+    
+    # 执行第三个替换
+    new_content = re.sub(pattern3, replacement3, new_content)
+    
+    # 写入修改后的内容
+    with open(filepath, 'w', encoding='utf-8') as f:
+        f.write(new_content)
+    
+    print(f"已成功应用修复到文件: {filepath}")
+    logger.info(f"已成功应用修复到文件: {filepath}")
+    return True
 
 def remove_content_length_headers(headers_data):
     """移除所有现有的content-length字段"""

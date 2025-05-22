@@ -1,0 +1,11 @@
+2025-05-22 17:49:12,378 - INFO - [MainThread] 读取PCAP文件: pcap\N16_fixed_pkt15_final.pcap
+2025-05-22 17:49:12,381 - INFO - [MainThread] 第15号数据包负载长度: 441 字节
+2025-05-22 17:49:12,381 - INFO - [MainThread] 找到HEADERS帧, 长度: 88
+2025-05-22 17:49:12,381 - INFO - [MainThread] 成功解码HEADERS帧
+2025-05-22 17:49:12,381 - INFO - [MainThread]   头部字段 1: :status: 201
+2025-05-22 17:49:12,381 - INFO - [MainThread]   头部字段 2: location: http://40.0.0.1/nsmf-pdusession/v1/pdu-sessions/9000000001
+2025-05-22 17:49:12,381 - INFO - [MainThread]   头部字段 3: content-type: application/json
+2025-05-22 17:49:12,382 - INFO - [MainThread]   头部字段 4: content-length: 351
+2025-05-22 17:49:12,382 - INFO - [MainThread]   头部字段 5: date: Wed, 22 May 2025 02:48:05 GMT
+2025-05-22 17:49:12,383 - INFO - [MainThread] 所有头部字段验证通过!
+2025-05-22 17:49:12,384 - INFO - [MainThread] 验证成功: 第15号数据包的HTTP头部符合所有要求!
