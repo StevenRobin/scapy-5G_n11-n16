@@ -1,101 +1,104 @@
-2025-05-21 00:42:50,175 - INFO - [MainThread] 开始处理文件 pcap/N16_create_16p.pcap
-2025-05-21 00:42:50,180 - INFO - [MainThread] 替换源IP 200.20.20.26 -> 30.0.0.1
-2025-05-21 00:42:50,181 - INFO - [MainThread] 替换目的IP 200.20.20.25 -> 40.0.0.1
-2025-05-21 00:42:50,182 - INFO - [MainThread] 替换源IP 200.20.20.25 -> 40.0.0.1
-2025-05-21 00:42:50,182 - INFO - [MainThread] 替换目的IP 200.20.20.26 -> 30.0.0.1
-2025-05-21 00:42:50,183 - INFO - [MainThread] 替换源IP 200.20.20.26 -> 30.0.0.1
-2025-05-21 00:42:50,183 - INFO - [MainThread] 替换目的IP 200.20.20.25 -> 40.0.0.1
-2025-05-21 00:42:50,184 - INFO - [MainThread] 替换源IP 200.20.20.26 -> 30.0.0.1
-2025-05-21 00:42:50,185 - INFO - [MainThread] 替换目的IP 200.20.20.25 -> 40.0.0.1
-2025-05-21 00:42:50,186 - INFO - [MainThread] 替换源IP 200.20.20.25 -> 40.0.0.1
-2025-05-21 00:42:50,186 - INFO - [MainThread] 替换目的IP 200.20.20.26 -> 30.0.0.1
-2025-05-21 00:42:50,187 - INFO - [MainThread] 替换源IP 200.20.20.25 -> 40.0.0.1
-2025-05-21 00:42:50,187 - INFO - [MainThread] 替换目的IP 200.20.20.26 -> 30.0.0.1
-2025-05-21 00:42:50,188 - INFO - [MainThread] 替换源IP 200.20.20.25 -> 40.0.0.1
-2025-05-21 00:42:50,188 - INFO - [MainThread] 替换目的IP 200.20.20.26 -> 30.0.0.1
-2025-05-21 00:42:50,189 - INFO - [MainThread] 替换源IP 200.20.20.26 -> 30.0.0.1
-2025-05-21 00:42:50,189 - INFO - [MainThread] 替换目的IP 200.20.20.25 -> 40.0.0.1
-2025-05-21 00:42:50,191 - INFO - [MainThread] 特殊处理第9个报文
-2025-05-21 00:42:50,191 - INFO - [MainThread] 处理第9个报文的第1个HEADERS帧
-2025-05-21 00:42:50,192 - INFO - [MainThread] 对第9个报文使用二进制替换方法
-2025-05-21 00:42:50,192 - INFO - [MainThread] 替换:authority: 200.20.20.25:8080 -> 40.0.0.1
-2025-05-21 00:42:50,192 - INFO - [MainThread] 替换:path: /nsmf-pdusession/v1/sm-contexts/1722077971/retrieve -> /nsmf-pdusession/v1/sm-contexts/9000000001/retrieve
-2025-05-21 00:42:50,193 - INFO - [MainThread] HEADERS已修改，新长度: 64
-2025-05-21 00:42:50,193 - INFO - [MainThread] 第9个报文已通过帧处理修改
-2025-05-21 00:42:50,194 - INFO - [MainThread] 替换源IP 200.20.20.26 -> 30.0.0.1
-2025-05-21 00:42:50,194 - INFO - [MainThread] 替换目的IP 200.20.20.25 -> 40.0.0.1
-2025-05-21 00:42:50,195 - INFO - [MainThread] 替换源IP 200.20.20.25 -> 40.0.0.1
-2025-05-21 00:42:50,195 - INFO - [MainThread] 替换目的IP 200.20.20.26 -> 30.0.0.1
-2025-05-21 00:42:50,196 - INFO - [MainThread] 特殊处理第11个报文
-2025-05-21 00:42:50,196 - INFO - [MainThread] 处理第11个报文的第0个HEADERS帧
-2025-05-21 00:42:50,196 - INFO - [MainThread] 对第11个报文使用二进制替换方法
-2025-05-21 00:42:50,197 - INFO - [MainThread] 特殊处理第11号报文
-2025-05-21 00:42:50,197 - INFO - [MainThread] 使用额外的强制替换方法确保authority字段正确
-2025-05-21 00:42:50,197 - INFO - [MainThread] 替换 dnn: dnn-0000 -> dnn600000001
-2025-05-21 00:42:50,197 - INFO - [MainThread] 替换 gpsi: msisdn-8611111111111 -> msisdn-8613900000001
-2025-05-21 00:42:50,198 - INFO - [MainThread] 替换 ueIpv4Address: 30.30.30.20 -> 100.0.0.1
-2025-05-21 00:42:50,198 - INFO - [MainThread] JSON数据已修改
-2025-05-21 00:42:50,198 - INFO - [MainThread] 第11个报文DATA帧已修改，新长度: 350
-2025-05-21 00:42:50,198 - INFO - [MainThread] 更新Content-Length: 348 -> 350
-2025-05-21 00:42:50,198 - INFO - [MainThread] 第11个报文的content-length已更新
-2025-05-21 00:42:50,199 - INFO - [MainThread] 在第11个报文的HEADERS帧中添加缺失的content-length字段
-2025-05-21 00:42:50,199 - INFO - [MainThread] 更新Content-Length: 350 -> 350
-2025-05-21 00:42:50,199 - INFO - [MainThread] 第11个报文已通过帧处理修改
-2025-05-21 00:42:50,200 - INFO - [MainThread] 替换源IP 200.20.20.25 -> 40.0.0.1
-2025-05-21 00:42:50,200 - INFO - [MainThread] 替换目的IP 200.20.20.26 -> 30.0.0.1
-2025-05-21 00:42:50,201 - INFO - [MainThread] 替换源IP 200.20.20.26 -> 30.0.0.1
-2025-05-21 00:42:50,201 - INFO - [MainThread] 替换目的IP 200.20.20.25 -> 40.0.0.1
-2025-05-21 00:42:50,202 - INFO - [MainThread] 特殊处理第13个报文
-2025-05-21 00:42:50,203 - INFO - [MainThread] 处理第13个报文的第0个HEADERS帧
-2025-05-21 00:42:50,203 - INFO - [MainThread] 对第13个报文使用二进制替换方法
-2025-05-21 00:42:50,203 - INFO - [MainThread] 特殊处理第13号报文 - 确保content-type存在且头部正确
-2025-05-21 00:42:50,204 - INFO - [MainThread] 添加默认content-type: application/json
-2025-05-21 00:42:50,204 - INFO - [MainThread] 为第13号报文创建了最小化头部，新长度: 48
-2025-05-21 00:42:50,204 - ERROR - [MainThread] 解析HEADERS错误: Invalid table index 63
-2025-05-21 00:42:50,204 - INFO - [MainThread] 替换 supi: imsi-460011357924680 -> imsi-460012300000001
-2025-05-21 00:42:50,205 - INFO - [MainThread] 替换 pei: imeisv-8611111111111111 -> imeisv-8611101000000011
-2025-05-21 00:42:50,205 - INFO - [MainThread] 替换 dnn: dnn-0000 -> dnn600000001
-2025-05-21 00:42:50,205 - INFO - [MainThread] 替换 ismfId: c251849c-681e-48ba-918b-ae0200867718 -> c251849c-681e-48ba-918b-000500000001
-2025-05-21 00:42:50,205 - INFO - [MainThread] 替换 ismfPduSessionUri: http://200.20.20.26:8080/nsmf-pdusession/v1/pdu-sessions/461977034 -> http://30.0.0.1/nsmf-pdusession/v1/pdu-sessions/10000001
-2025-05-21 00:42:50,206 - INFO - [MainThread] 替换 icnTunnelInfo: {'ipv4Addr': '30.0.0.3', 'gtpTeid': '00000001'} -> {'ipv4Addr': '10.0.0.1', 'gtpTeid': '10000001'}
-2025-05-21 00:42:50,206 - INFO - [MainThread] 替换 nrCellId: 00011c006 -> 010000001
-2025-05-21 00:42:50,206 - INFO - [MainThread] 替换 gpsi: msisdn-8611111111111 -> msisdn-8613900000001
-2025-05-21 00:42:50,206 - INFO - [MainThread] JSON数据已修改
-2025-05-21 00:42:50,207 - INFO - [MainThread] 第13个报文DATA帧已修改，新长度: 703
-2025-05-21 00:42:50,207 - INFO - [MainThread] 在第13个报文的HEADERS帧中添加缺失的content-length字段
-2025-05-21 00:42:50,207 - INFO - [MainThread] 添加Content-Length: 703
-2025-05-21 00:42:50,208 - INFO - [MainThread] 已在第13个报文中添加content-length: 703
-2025-05-21 00:42:50,208 - INFO - [MainThread] 第13个报文已通过帧处理修改
-2025-05-21 00:42:50,208 - INFO - [MainThread] 替换源IP 200.20.20.26 -> 30.0.0.1
-2025-05-21 00:42:50,209 - INFO - [MainThread] 替换目的IP 200.20.20.25 -> 40.0.0.1
-2025-05-21 00:42:50,210 - INFO - [MainThread] 替换源IP 200.20.20.25 -> 40.0.0.1
-2025-05-21 00:42:50,210 - INFO - [MainThread] 替换目的IP 200.20.20.26 -> 30.0.0.1
-2025-05-21 00:42:50,211 - INFO - [MainThread] 特殊处理第15个报文
-2025-05-21 00:42:50,212 - INFO - [MainThread] 处理第15个报文的第0个HEADERS帧
-2025-05-21 00:42:50,212 - INFO - [MainThread] 对第15个报文使用二进制替换方法
-2025-05-21 00:42:50,213 - INFO - [MainThread] 特殊处理第15号报文 - 确保location正确且content-length存在
-2025-05-21 00:42:50,213 - ERROR - [MainThread] 解码第15号报文头部失败: Invalid table index 63，将使用二进制替换方法
-2025-05-21 00:42:50,213 - ERROR - [MainThread] 解析HEADERS错误: Invalid table index 63
-2025-05-21 00:42:50,213 - INFO - [MainThread] 替换 cnTunnelInfo: {'ipv4Addr': '30.0.0.2', 'gtpTeid': '00000001'} -> {'ipv4Addr': '20.0.0.1', 'gtpTeid': '50000001'}
-2025-05-21 00:42:50,214 - INFO - [MainThread] 替换 uplink: 5.000 Gbps -> 5000000000
-2025-05-21 00:42:50,214 - INFO - [MainThread] 替换 downlink: 5.000 Gbps -> 5000000000
-2025-05-21 00:42:50,214 - INFO - [MainThread] 替换 ueIpv4Address: 30.30.30.20 -> 100.0.0.1
-2025-05-21 00:42:50,214 - INFO - [MainThread] JSON数据已修改
-2025-05-21 00:42:50,215 - INFO - [MainThread] 第15个报文DATA帧已修改，新长度: 351
-2025-05-21 00:42:50,215 - INFO - [MainThread] 对第15号报文执行特殊处理来确保content-length正确
-2025-05-21 00:42:50,215 - WARNING - [MainThread] HPACK清理content-length字段失败: Invalid table index 63
-2025-05-21 00:42:50,215 - INFO - [MainThread] 第15号报文：使用增强方法添加content-length: 351
-2025-05-21 00:42:50,215 - WARNING - [MainThread] HPACK解码失败，尝试简化内容后重试: Invalid table index 63
-2025-05-21 00:42:50,216 - INFO - [MainThread] 添加Content-Length: 351
-2025-05-21 00:42:50,216 - WARNING - [MainThread] 第15号报文：常规添加content-length失败或值不正确，尝试直接插入
-2025-05-21 00:42:50,216 - INFO - [MainThread] 第15号报文：在末尾强制添加content-length: 351
-2025-05-21 00:42:50,216 - WARNING - [MainThread] 第15号报文：无法解析最终content-length值
-2025-05-21 00:42:50,217 - WARNING - [MainThread] 第15号报文：无法解析最终content-length值
-2025-05-21 00:42:50,217 - WARNING - [MainThread] 第15号报文：所有尝试都未能正确设置content-length，考虑使用外部工具
-2025-05-21 00:42:50,217 - INFO - [MainThread] 第15个报文已通过帧处理修改
-2025-05-21 00:42:50,217 - INFO - [MainThread] 替换源IP 200.20.20.25 -> 40.0.0.1
-2025-05-21 00:42:50,218 - INFO - [MainThread] 替换目的IP 200.20.20.26 -> 30.0.0.1
-2025-05-21 00:42:50,218 - INFO - [MainThread] 替换源IP 200.20.20.26 -> 30.0.0.1
-2025-05-21 00:42:50,219 - INFO - [MainThread] 替换目的IP 200.20.20.25 -> 40.0.0.1
-2025-05-21 00:42:50,219 - INFO - [MainThread] 保存修改后的PCAP到 pcap/N16_1435.pcap
-2025-05-21 00:42:50,232 - INFO - [MainThread] 处理完成，共处理 16 个报文
+2025-05-23 11:56:53,829 - INFO - [MainThread] 开始处理文件 pcap/N16_create_16p.pcap
+2025-05-23 11:56:53,833 - INFO - [MainThread] 替换源IP 200.20.20.26 -> 30.0.0.1
+2025-05-23 11:56:53,833 - INFO - [MainThread] 替换目的IP 200.20.20.25 -> 40.0.0.1
+2025-05-23 11:56:53,834 - INFO - [MainThread] 替换源IP 200.20.20.25 -> 40.0.0.1
+2025-05-23 11:56:53,835 - INFO - [MainThread] 替换目的IP 200.20.20.26 -> 30.0.0.1
+2025-05-23 11:56:53,835 - INFO - [MainThread] 替换源IP 200.20.20.26 -> 30.0.0.1
+2025-05-23 11:56:53,836 - INFO - [MainThread] 替换目的IP 200.20.20.25 -> 40.0.0.1
+2025-05-23 11:56:53,837 - INFO - [MainThread] 替换源IP 200.20.20.26 -> 30.0.0.1
+2025-05-23 11:56:53,837 - INFO - [MainThread] 替换目的IP 200.20.20.25 -> 40.0.0.1
+2025-05-23 11:56:53,839 - INFO - [MainThread] 替换源IP 200.20.20.25 -> 40.0.0.1
+2025-05-23 11:56:53,839 - INFO - [MainThread] 替换目的IP 200.20.20.26 -> 30.0.0.1
+2025-05-23 11:56:53,840 - INFO - [MainThread] 替换源IP 200.20.20.25 -> 40.0.0.1
+2025-05-23 11:56:53,840 - INFO - [MainThread] 替换目的IP 200.20.20.26 -> 30.0.0.1
+2025-05-23 11:56:53,841 - INFO - [MainThread] 替换源IP 200.20.20.25 -> 40.0.0.1
+2025-05-23 11:56:53,841 - INFO - [MainThread] 替换目的IP 200.20.20.26 -> 30.0.0.1
+2025-05-23 11:56:53,842 - INFO - [MainThread] 替换源IP 200.20.20.26 -> 30.0.0.1
+2025-05-23 11:56:53,842 - INFO - [MainThread] 替换目的IP 200.20.20.25 -> 40.0.0.1
+2025-05-23 11:56:53,843 - INFO - [MainThread] 特殊处理第9个报文
+2025-05-23 11:56:53,843 - INFO - [MainThread] 开始处理第9号报文的HTTP/2头部
+2025-05-23 11:56:53,844 - INFO - [MainThread] 特殊处理第9号报文 - 保证字段齐全
+2025-05-23 11:56:53,844 - INFO - [MainThread] 为第9号报文创建了齐全头部，新长度: 65
+2025-05-23 11:56:53,873 - INFO - [MainThread] 更新Content-Length: 30 -> 30
+2025-05-23 11:56:53,874 - INFO - [MainThread] 第9个报文修改完成
+2025-05-23 11:56:53,874 - INFO - [MainThread] 替换源IP 200.20.20.26 -> 30.0.0.1
+2025-05-23 11:56:53,875 - INFO - [MainThread] 替换目的IP 200.20.20.25 -> 40.0.0.1
+2025-05-23 11:56:53,876 - INFO - [MainThread] 替换源IP 200.20.20.25 -> 40.0.0.1
+2025-05-23 11:56:53,876 - INFO - [MainThread] 替换目的IP 200.20.20.26 -> 30.0.0.1
+2025-05-23 11:56:53,876 - INFO - [MainThread] 特殊处理第11个报文
+2025-05-23 11:56:53,877 - INFO - [MainThread] 替换 dnn: dnn-0000 -> dnn600000001
+2025-05-23 11:56:53,877 - INFO - [MainThread] 替换 gpsi: msisdn-8611111111111 -> msisdn-8613900000001
+2025-05-23 11:56:53,877 - INFO - [MainThread] 替换 ueIpv4Address: 30.30.30.20 -> 100.0.0.1
+2025-05-23 11:56:53,877 - INFO - [MainThread] JSON数据已修改
+2025-05-23 11:56:53,877 - INFO - [MainThread] 开始处理第11号报文的HTTP/2头部
+2025-05-23 11:56:53,878 - INFO - [MainThread] 特殊处理第11号报文
+2025-05-23 11:56:53,878 - INFO - [MainThread] 使用额外的强制替换方法确保authority字段正确
+2025-05-23 11:56:53,878 - INFO - [MainThread] 更新Content-Length: 348 -> 350
+2025-05-23 11:56:53,879 - INFO - [MainThread] 替换 dnn: dnn-0000 -> dnn600000001
+2025-05-23 11:56:53,879 - INFO - [MainThread] 替换 gpsi: msisdn-8611111111111 -> msisdn-8613900000001
+2025-05-23 11:56:53,879 - INFO - [MainThread] 替换 ueIpv4Address: 30.30.30.20 -> 100.0.0.1
+2025-05-23 11:56:53,879 - INFO - [MainThread] JSON数据已修改
+2025-05-23 11:56:53,880 - INFO - [MainThread] 第11个报文修改完成
+2025-05-23 11:56:53,880 - INFO - [MainThread] 替换源IP 200.20.20.25 -> 40.0.0.1
+2025-05-23 11:56:53,880 - INFO - [MainThread] 替换目的IP 200.20.20.26 -> 30.0.0.1
+2025-05-23 11:56:53,881 - INFO - [MainThread] 替换源IP 200.20.20.26 -> 30.0.0.1
+2025-05-23 11:56:53,881 - INFO - [MainThread] 替换目的IP 200.20.20.25 -> 40.0.0.1
+2025-05-23 11:56:53,881 - INFO - [MainThread] 特殊处理第13个报文
+2025-05-23 11:56:53,881 - INFO - [MainThread] 替换 supi: imsi-460011357924680 -> imsi-460012300000001
+2025-05-23 11:56:53,882 - INFO - [MainThread] 替换 pei: imeisv-8611111111111111 -> imeisv-8611101000000011
+2025-05-23 11:56:53,882 - INFO - [MainThread] 替换 dnn: dnn-0000 -> dnn600000001
+2025-05-23 11:56:53,882 - INFO - [MainThread] 替换 ismfId: c251849c-681e-48ba-918b-ae0200867718 -> c251849c-681e-48ba-918b-000500000001
+2025-05-23 11:56:53,882 - INFO - [MainThread] 替换 ismfPduSessionUri: http://200.20.20.26:8080/nsmf-pdusession/v1/pdu-sessions/461977034 -> http://30.0.0.1/nsmf-pdusession/v1/pdu-sessions/10000001
+2025-05-23 11:56:53,882 - INFO - [MainThread] 替换 icnTunnelInfo: {'ipv4Addr': '30.0.0.3', 'gtpTeid': '00000001'} -> {'ipv4Addr': '10.0.0.1', 'gtpTeid': '10000001'}
+2025-05-23 11:56:53,882 - INFO - [MainThread] 替换 tac: 000066 -> 100001
+2025-05-23 11:56:53,882 - INFO - [MainThread] 替换 nrCellId: 00011c006 -> 010000001
+2025-05-23 11:56:53,882 - INFO - [MainThread] 替换 gpsi: msisdn-8611111111111 -> msisdn-8613900000001
+2025-05-23 11:56:53,882 - INFO - [MainThread] JSON数据已修改
+2025-05-23 11:56:53,883 - INFO - [MainThread] 开始处理第13号报文的HTTP/2头部
+2025-05-23 11:56:53,883 - INFO - [MainThread] 特殊处理第13号报文 - 保证字段齐全
+2025-05-23 11:56:53,883 - INFO - [MainThread] 为第13号报文创建了齐全头部，新长度: 66
+2025-05-23 11:56:53,884 - INFO - [MainThread] 更新Content-Length: 703 -> 703
+2025-05-23 11:56:53,884 - INFO - [MainThread] 替换 supi: imsi-460011357924680 -> imsi-460012300000001
+2025-05-23 11:56:53,884 - INFO - [MainThread] 替换 pei: imeisv-8611111111111111 -> imeisv-8611101000000011
+2025-05-23 11:56:53,884 - INFO - [MainThread] 替换 dnn: dnn-0000 -> dnn600000001
+2025-05-23 11:56:53,884 - INFO - [MainThread] 替换 ismfId: c251849c-681e-48ba-918b-ae0200867718 -> c251849c-681e-48ba-918b-000500000001
+2025-05-23 11:56:53,885 - INFO - [MainThread] 替换 ismfPduSessionUri: http://200.20.20.26:8080/nsmf-pdusession/v1/pdu-sessions/461977034 -> http://30.0.0.1/nsmf-pdusession/v1/pdu-sessions/10000001
+2025-05-23 11:56:53,885 - INFO - [MainThread] 替换 icnTunnelInfo: {'ipv4Addr': '30.0.0.3', 'gtpTeid': '00000001'} -> {'ipv4Addr': '10.0.0.1', 'gtpTeid': '10000001'}
+2025-05-23 11:56:53,885 - INFO - [MainThread] 替换 tac: 000066 -> 100001
+2025-05-23 11:56:53,885 - INFO - [MainThread] 替换 nrCellId: 00011c006 -> 010000001
+2025-05-23 11:56:53,885 - INFO - [MainThread] 替换 gpsi: msisdn-8611111111111 -> msisdn-8613900000001
+2025-05-23 11:56:53,885 - INFO - [MainThread] JSON数据已修改
+2025-05-23 11:56:53,885 - INFO - [MainThread] 第13个报文修改完成
+2025-05-23 11:56:53,886 - INFO - [MainThread] 替换源IP 200.20.20.26 -> 30.0.0.1
+2025-05-23 11:56:53,886 - INFO - [MainThread] 替换目的IP 200.20.20.25 -> 40.0.0.1
+2025-05-23 11:56:53,887 - INFO - [MainThread] 替换源IP 200.20.20.25 -> 40.0.0.1
+2025-05-23 11:56:53,887 - INFO - [MainThread] 替换目的IP 200.20.20.26 -> 30.0.0.1
+2025-05-23 11:56:53,887 - INFO - [MainThread] 特殊处理第15个报文
+2025-05-23 11:56:53,887 - INFO - [MainThread] 精确处理第15号报文，确保头部字段顺序和值不变
+2025-05-23 11:56:53,888 - INFO - [MainThread] 处理第15号报文的HEADERS帧
+2025-05-23 11:56:53,888 - INFO - [MainThread] 开始处理第15号报文的HTTP/2头部
+2025-05-23 11:56:53,888 - INFO - [MainThread] 特殊处理第15号报文的头部
+2025-05-23 11:56:53,888 - INFO - [MainThread] 第15号报文头部字段（按顺序）：
+2025-05-23 11:56:53,888 - INFO - [MainThread]   :status: 201
+2025-05-23 11:56:53,889 - INFO - [MainThread]   content-type: application/json
+2025-05-23 11:56:53,889 - INFO - [MainThread]   location: http://40.0.0.1/nsmf-pdusession/v1/pdu-sessions/9000000001
+2025-05-23 11:56:53,889 - INFO - [MainThread]   date: Wed, 22 May 2025 02:48:05 GMT
+2025-05-23 11:56:53,889 - INFO - [MainThread]   content-length: 351
+2025-05-23 11:56:53,889 - INFO - [MainThread] 第15号报文头部已重新构建，保持原始顺序，长度: 88
+2025-05-23 11:56:53,889 - INFO - [MainThread] 处理第15号报文的DATA帧
+2025-05-23 11:56:53,889 - INFO - [MainThread] 替换 cnTunnelInfo: {'ipv4Addr': '30.0.0.2', 'gtpTeid': '00000001'} -> {'ipv4Addr': '20.0.0.1', 'gtpTeid': '50000001'}
+2025-05-23 11:56:53,889 - INFO - [MainThread] 替换 uplink: 5.000 Gbps -> 5000000000
+2025-05-23 11:56:53,890 - INFO - [MainThread] 替换 downlink: 5.000 Gbps -> 5000000000
+2025-05-23 11:56:53,890 - INFO - [MainThread] 替换 ueIpv4Address: 30.30.30.20 -> 100.0.0.1
+2025-05-23 11:56:53,890 - INFO - [MainThread] JSON数据已修改
+2025-05-23 11:56:53,890 - INFO - [MainThread] 第15号报文DATA帧已修改，新长度: 351
+2025-05-23 11:56:53,890 - INFO - [MainThread] 处理第15号报文的DATA帧
+2025-05-23 11:56:53,890 - INFO - [MainThread] 更新第15号报文HEADERS帧中的content-length: 351
+2025-05-23 11:56:53,891 - INFO - [MainThread] 更新Content-Length: 351 -> 351
+2025-05-23 11:56:53,891 - INFO - [MainThread] 第15号报文修改完成，保持头部字段顺序不变
+2025-05-23 11:56:53,892 - INFO - [MainThread] 替换源IP 200.20.20.25 -> 40.0.0.1
+2025-05-23 11:56:53,892 - INFO - [MainThread] 替换目的IP 200.20.20.26 -> 30.0.0.1
+2025-05-23 11:56:53,892 - INFO - [MainThread] 替换源IP 200.20.20.26 -> 30.0.0.1
+2025-05-23 11:56:53,893 - INFO - [MainThread] 替换目的IP 200.20.20.25 -> 40.0.0.1
+2025-05-23 11:56:53,893 - INFO - [MainThread] 保存修改后的PCAP到 pcap/N16_1707.pcap
+2025-05-23 11:56:53,900 - INFO - [MainThread] 处理完成，共处理 16 个报文
