@@ -95,29 +95,28 @@ def process_http2_frame_header(raw, offset):
     """解析 HTTP/2 帧头部，并防止对超出数据范围的读取"""
     try:
         if offset + 9 > len(raw):
-            logger.warning(f"帧头偏移量 {offset} 超出数据范围 {len(raw)}")
+            # logger.warning(f"帧头偏移量 {offset} 超出数据范围 {len(raw)}")
             return None, None, None, None, len(raw)
         frame_header = HTTP2FrameHeader(raw[offset:offset + 9])
         frame_len = frame_header.length
         frame_type = frame_header.type
-        # 当帧体长度超过剩余捕获数据时，使用剩余长度
         frame_end = offset + 9 + frame_len
         if frame_end > len(raw):
-            logger.warning(f"帧长度超过捕获长度, 原长度={frame_len}, 调整为剩余长度")
+            # logger.warning(f"帧长度超过捕获长度, 原长度={frame_len}, 调整为剩余长度")
             frame_end = len(raw)
             frame_len = frame_end - (offset + 9)
             frame_header.length = frame_len
         frame_data = raw[offset + 9:frame_end]
         return frame_header, frame_len, frame_type, frame_data, frame_end
     except Exception as e:
-        logger.error(f"帧解析错误: {str(e)}")
+        # logger.error(f"帧解析错误: {str(e)}")
         return None, None, None, None, len(raw)
 
 def modify_json_data(payload):
     """修改 JSON 数据中的目标字段，支持变量替换"""
     try:
         if not payload.strip():
-            logger.debug("跳过空数据段")
+            # logger.debug("跳过空数据段")
             return None
         
         # 尝试解码为字符串
@@ -127,7 +126,7 @@ def modify_json_data(payload):
             else:
                 payload_str = payload
         except UnicodeDecodeError:
-            logger.warning("JSON数据解码失败，尝试以原始形式处理")
+            # logger.warning("JSON数据解码失败，尝试以原始形式处理")
             payload_str = payload
             
         data = json.loads(payload_str)
@@ -148,7 +147,7 @@ def modify_json_data(payload):
                             if value != new_val:
                                 obj[key] = new_val
                                 modified = True
-                                logger.info(f"替换 ismfId: {value} -> {new_val}")
+                                # logger.info(f"替换 ismfId: {value} -> {new_val}")
                     elif key == "ismfPduSessionUri":
                         # 替换host和最后数字
                         m = re.match(r"http://([\d.]+):\d+/(.+/)(\d+)", value)
@@ -157,19 +156,19 @@ def modify_json_data(payload):
                             if value != new_val:
                                 obj[key] = new_val
                                 modified = True
-                                logger.info(f"替换 ismfPduSessionUri: {value} -> {new_val}")
+                                # logger.info(f"替换 ismfPduSessionUri: {value} -> {new_val}")
                     elif key in var_map and var_map[key] is not None:
                         if value != var_map[key]:
                             obj[key] = var_map[key]
                             modified = True
-                            logger.info(f"替换 {key}: {value} -> {var_map[key]}")
+                            # logger.info(f"替换 {key}: {value} -> {var_map[key]}")
                     elif key in ["icnTunnelInfo", "cnTunnelInfo"] and isinstance(value, dict):
                         for subk in ["ipv4Addr", "gtpTeid"]:
                             if subk in value and value.get(subk) != var_map[key][subk]:
                                 old_val = value[subk]
                                 value[subk] = var_map[key][subk]
                                 modified = True
-                                logger.info(f"替换 {key}.{subk}: {old_val} -> {var_map[key][subk]}")
+                                # logger.info(f"替换 {key}.{subk}: {old_val} -> {var_map[key][subk]}")
                     elif isinstance(value, (dict, list)):
                         recursive_modify(value)
             elif isinstance(obj, list):
@@ -179,15 +178,15 @@ def modify_json_data(payload):
         
         recursive_modify(data)
         if modified:
-            logger.info("JSON数据已修改")
+            # logger.info("JSON数据已修改")
             return json.dumps(data, indent=None, separators=(',', ':')).encode()
         else:
-            logger.debug("JSON数据无需修改")
+            # logger.debug("JSON数据无需修改")
             return None
     except Exception as e:
-        logger.error(f"JSON处理错误: {str(e)}")
-        import traceback
-        logger.error(traceback.format_exc())
+        # logger.error(f"JSON处理错误: {str(e)}")
+        # import traceback
+        # logger.error(traceback.format_exc())
         return None
 
 def process_http2_data_frame(frame_data):
@@ -196,8 +195,7 @@ def process_http2_data_frame(frame_data):
         return frame_data
         
     if b"--++Boundary" in frame_data:
-        # 多部分数据
-        logger.debug("处理多部分数据")
+        # logger.debug("处理多部分数据")
         parts = re.split(br'(--\+\+Boundary)', frame_data)
         for i in range(len(parts)):
             if parts[i] == b"--++Boundary" and i + 1 < len(parts):
@@ -209,7 +207,7 @@ def process_http2_data_frame(frame_data):
                         # 修改JSON字段
                         modified = modify_json_data(json_part)
                         if modified:
-                            logger.info("更新多部分数据中的JSON部分")
+                            # logger.info("更新多部分数据中的JSON部分")
                             parts[i + 1] = segments[0] + b"\r\n\r\n" + modified
         return b''.join(parts)
     else:
@@ -244,10 +242,10 @@ def process_packet(pkt, seq_diff, ip_replacements, original_length=None, new_len
     """
     if pkt.haslayer(IP):
         if pkt[IP].src in ip_replacements:
-            logger.info(f"替换源IP {pkt[IP].src} -> {ip_replacements[pkt[IP].src]}")
+            # logger.info(f"替换源IP {pkt[IP].src} -> {ip_replacements[pkt[IP].src]}")
             pkt[IP].src = ip_replacements[pkt[IP].src]
         if pkt[IP].dst in ip_replacements:
-            logger.info(f"替换目的IP {pkt[IP].dst} -> {ip_replacements[pkt[IP].dst]}")
+            # logger.info(f"替换目的IP {pkt[IP].dst} -> {ip_replacements[pkt[IP].dst]}")
             pkt[IP].dst = ip_replacements[pkt[IP].dst]
 
     if pkt.haslayer(TCP):
@@ -305,7 +303,7 @@ def modify_header_field(headers, field_name, new_value, case_sensitive=False):
             else:
                 new_val = new_value
                 
-            logger.info(f"修改HTTP2头: {name_str}, 原值: {value} -> 新值: {new_val}")
+            # logger.info(f"修改HTTP2头: {name_str}, 原值: {value} -> 新值: {new_val}")
             new_headers.append((name, new_val))
             modified = True
         else:
@@ -326,18 +324,18 @@ def replace_path_context_id(path_str, new_id):
 def process_special_headers(frame_data, pkt_idx, data_length=None):
     """特殊处理HTTP2 Headers帧 - 确保字段齐全"""
     try:
-        logger.info(f"开始处理第{pkt_idx}号报文的HTTP/2头部")
+        # logger.info(f"开始处理第{pkt_idx}号报文的HTTP/2头部")
 
         # 定义二进制搜索替换辅助函数
         def binary_replace(data, search_pattern, replace_pattern):
             if search_pattern in data:
-                logger.debug(f"找到模式: {search_pattern}")
+                # logger.debug(f"找到模式: {search_pattern}")
                 return data.replace(search_pattern, replace_pattern)
             return data
             
         # 第15号报文的特殊处理 - 专注于正确维护头部顺序
         if pkt_idx == 15:
-            logger.info(f"特殊处理第{pkt_idx}号报文的头部")
+            # logger.info(f"特殊处理第{pkt_idx}号报文的头部")
             try:
                 fixed_headers = [
                     (b':status', b'201'),
@@ -346,21 +344,22 @@ def process_special_headers(frame_data, pkt_idx, data_length=None):
                     (b'date', b'Wed, 22 May 2025 02:48:05 GMT'),
                     (b'content-length', b'351')
                 ]
-                logger.info("第15号报文头部字段（按顺序）：")
+                # logger.info("第15号报文头部字段（按顺序）：")
                 for name, value in fixed_headers:
-                    logger.info(f"  {name.decode()}: {value.decode()}")
+                    # logger.info(f"  {name.decode()}: {value.decode()}")
+                    pass
                 encoder = Encoder()
                 new_headers_data = encoder.encode(fixed_headers)
-                logger.info(f"第15号报文头部已重新构建，保持原始顺序，长度: {len(new_headers_data)}")
+                # logger.info(f"第15号报文头部已重新构建，保持原始顺序，长度: {len(new_headers_data)}")
                 return new_headers_data
             except Exception as e:
-                logger.error(f"为第15号报文创建固定头部失败: {e}")
-                logger.warning("返回第15号报文的原始头部，可能导致问题")
+                # logger.error(f"为第15号报文创建固定头部失败: {e}")
+                # logger.warning("返回第15号报文的原始头部，可能导致问题")
                 return frame_data
 
         # 第9、13号报文，强制补全字段
         if pkt_idx in {9, 13}:
-            logger.info(f"特殊处理第{pkt_idx}号报文 - 保证字段齐全")
+            # logger.info(f"特殊处理第{pkt_idx}号报文 - 保证字段齐全")
             try:
                 headers = [
                     (b':method', b'POST'),
@@ -376,15 +375,15 @@ def process_special_headers(frame_data, pkt_idx, data_length=None):
                 headers.append((b'accept', b'application/json'))
                 encoder = Encoder()
                 new_data = encoder.encode(headers)
-                logger.info(f"为第{pkt_idx}号报文创建了齐全头部，新长度: {len(new_data)}")
+                # logger.info(f"为第{pkt_idx}号报文创建了齐全头部，新长度: {len(new_data)}")
                 return new_data
             except Exception as e:
-                logger.error(f"处理第{pkt_idx}号报文头部错误: {e}")
+                # logger.error(f"处理第{pkt_idx}号报文头部错误: {e}")
                 return frame_data
 
         # 第11号报文特殊处理
         elif pkt_idx == 11:
-            logger.info(f"特殊处理第{pkt_idx}号报文")
+            # logger.info(f"特殊处理第{pkt_idx}号报文")
             try:
                 possible_patterns = [
                     b'200.20.20.25:8080', 
@@ -401,16 +400,17 @@ def process_special_headers(frame_data, pkt_idx, data_length=None):
                     replaced_data = binary_replace(temp_data, pattern, replacement if i < 2 else pattern.replace(b'200.20.20.25', replacement))
                     if replaced_data != temp_data:
                         temp_data = replaced_data
-                        logger.info(f"成功替换第{idx}号报文的authority模式{i}: {pattern} -> {replacement}")
+                        # logger.info(f"成功替换第{idx}号报文的authority模式{i}: {pattern} -> {replacement}")
                 if temp_data != frame_data:
-                    logger.info(f"成功替换第{idx}号报文的authority为: {auth1}")
+                    # logger.info(f"成功替换第{idx}号报文的authority为: {auth1}")
+                    pass
                 frame_data = temp_data
                 path_pattern = re.compile(b'/nsmf-pdusession/v1/sm-contexts/(\\d+)')
                 match = path_pattern.search(frame_data)
                 if match:
                     old_context = match.group(1)
                     new_path = path_pattern.sub(f'/nsmf-pdusession/v1/sm-contexts/{context_ID}'.encode(), frame_data)
-                    logger.info(f"成功替换第{idx}号报文中的context_ID: {old_context.decode()} -> {context_ID}")
+                    # logger.info(f"成功替换第{idx}号报文中的context_ID: {old_context.decode()} -> {context_ID}")
                     frame_data = new_path
                 auth_pos = frame_data.find(b':authority')
                 if auth_pos > 0:
@@ -424,9 +424,9 @@ def process_special_headers(frame_data, pkt_idx, data_length=None):
                                 val_end = pos
                     new_frame_data = frame_data[:val_start+1] + b' ' + auth1.encode() + frame_data[val_end:]
                     frame_data = new_frame_data
-                    logger.info(f"直接二进制替换第{idx}号报文的:authority值为: {auth1}")
+                    # logger.info(f"直接二进制替换第{idx}号报文的:authority值为: {auth1}")
                 if b':authority: ' + auth1.encode() not in frame_data and b':authority:' + auth1.encode() not in frame_data:
-                    logger.info(f"使用额外的强制替换方法确保authority字段正确")
+                    # logger.info(f"使用额外的强制替换方法确保authority字段正确")
                     for auth_pattern in [b':authority: ', b':authority:']:
                         pos = frame_data.find(auth_pattern)
                         if pos >= 0:
@@ -435,11 +435,11 @@ def process_special_headers(frame_data, pkt_idx, data_length=None):
                             while val_end < len(frame_data) and not (frame_data[val_end:val_end+1] in [b'\r', b'\n', b';', b':']):
                                 val_end += 1
                             frame_data = frame_data[:val_start] + auth1.encode() + frame_data[val_end:]
-                            logger.info(f"二次强制替换authority值: {auth1}")
+                            # logger.info(f"二次强制替换authority值: {auth1}")
                             break
                 return frame_data
             except Exception as e:
-                logger.error(f"处理第11号报文头部错误: {e}")
+                # logger.error(f"处理第11号报文头部错误: {e}")
                 return frame_data
 
         # 对于其他报文使用标准hpack解析方法
@@ -455,11 +455,11 @@ def process_special_headers(frame_data, pkt_idx, data_length=None):
                     if name_str == ":authority":
                         has_authority = True
                         break
-                logger.debug(f"包{pkt_idx} HEADERS原始内容:")
+                # logger.debug(f"包{pkt_idx} HEADERS原始内容:")
                 for i, (name, value) in enumerate(headers):
                     name_str = name.decode() if isinstance(name, bytes) else name
                     value_str = value.decode() if isinstance(value, bytes) and not isinstance(value, str) else value
-                    logger.debug(f"  [{i}] {name_str}: {value_str}")
+                    # logger.debug(f"  [{i}] {name_str}: {value_str}")
                 if pkt_idx in {9, 11, 13}:
                     for name, value in headers:
                         name_str = name.decode() if isinstance(name, bytes) else name
@@ -470,7 +470,7 @@ def process_special_headers(frame_data, pkt_idx, data_length=None):
                                 if isinstance(value, bytes):
                                     new_val = auth1.encode()
                                 new_headers.append((name, new_val))
-                                logger.info(f"替换:authority: {value} -> {new_val}")
+                                # logger.info(f"替换:authority: {value} -> {new_val}")
                                 modified = True
                             else:
                                 new_headers.append((name, value))
@@ -483,7 +483,7 @@ def process_special_headers(frame_data, pkt_idx, data_length=None):
                                     new_headers.append((name, new_path.encode()))
                                 else:
                                     new_headers.append((name, new_path))
-                                logger.info(f"替换:path: {value_str} -> {new_path}")
+                                # logger.info(f"替换:path: {value_str} -> {new_path}")
                                 modified = True
                             else:
                                 new_headers.append((name, value))
@@ -499,38 +499,38 @@ def process_special_headers(frame_data, pkt_idx, data_length=None):
                     if any(isinstance(value, bytes) for _, value in headers):
                         authority_value = auth1.encode()
                     new_headers.append((authority_field, authority_value))
-                    logger.info(f"添加缺失的:authority字段: {authority_value}")
+                    # logger.info(f"添加缺失的:authority字段: {authority_value}")
                     modified = True
 
                 # 编码修改后的头并返回
                 if modified:
-                    logger.debug(f"包{pkt_idx} HEADERS修改后:")
+                    # logger.debug(f"包{pkt_idx} HEADERS修改后:")
                     for i, (name, value) in enumerate(new_headers):
                         name_str = name.decode() if isinstance(name, bytes) else name
                         value_str = value.decode() if isinstance(value, bytes) and not isinstance(value, str) else value
-                        logger.debug(f"  [{i}] {name_str}: {value_str}")
+                        # logger.debug(f"  [{i}] {name_str}: {value_str}")
 
                     encoder = Encoder()
                     new_data = encoder.encode(new_headers)
-                    logger.info(f"HEADERS已修改，新长度: {len(new_data)}")
+                    # logger.info(f"HEADERS已修改，新长度: {len(new_data)}")
                     return new_data
 
                 return frame_data
             except Exception as e:
-                logger.error(f"处理Headers错误: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
+                # logger.error(f"处理Headers错误: {e}")
+                # import traceback
+                # logger.error(traceback.format_exc())
                 return frame_data
     except Exception as e:
-        logger.error(f"处理Headers总体错误: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+        # logger.error(f"处理Headers总体错误: {e}")
+        # import traceback
+        # logger.error(traceback.format_exc())
         return frame_data
 
 def update_content_length(headers_data, body_length):
     """更新HEADERS中的Content-Length字段 - 保持字段顺序"""
     try:
-        logger.debug(f"尝试更新Content-Length为: {body_length}")
+        # logger.debug(f"尝试更新Content-Length为: {body_length}")
         current_pkt_idx = -1
         try:
             import inspect
@@ -548,7 +548,7 @@ def update_content_length(headers_data, body_length):
                 headers = decoder.decode(headers_data)
                 new_headers = []
                 has_content_length = False
-                logger.info(f"第15号报文更新content-length: {body_length}")
+                # logger.info(f"第15号报文更新content-length: {body_length}")
                 for name, value in headers:
                     name_str = name.decode() if isinstance(name, bytes) else name
                     if isinstance(name_str, str) and name_str.lower() == 'content-length':
@@ -561,7 +561,7 @@ def update_content_length(headers_data, body_length):
                             new_headers.append((name, str(body_length).encode()))
                         else:
                             new_headers.append((name, str(body_length)))
-                        logger.info(f"更新第15号报文content-length: {value} -> {body_length}")
+                        # logger.info(f"更新第15号报文content-length: {value} -> {body_length}")
                     else:
                         new_headers.append((name, value))
                 if not has_content_length:
@@ -572,16 +572,16 @@ def update_content_length(headers_data, body_length):
                     if any(isinstance(value, bytes) for _, value in headers):
                         content_length_value = str(body_length).encode()
                     new_headers.append((content_length_key, content_length_value))
-                    logger.info(f"为第15号报文添加content-length: {body_length}")
+                    # logger.info(f"为第15号报文添加content-length: {body_length}")
                 new_headers_data = encoder.encode(new_headers)
-                logger.debug("第15号报文头部更新后内容:")
+                # logger.debug("第15号报文头部更新后内容:")
                 for name, value in new_headers:
                     name_str = name.decode() if isinstance(name, bytes) else name
                     value_str = value.decode() if isinstance(value, bytes) and not isinstance(value, str) else value
-                    logger.debug(f"  {name_str}: {value_str}")
+                    # logger.debug(f"  {name_str}: {value_str}")
                 return new_headers_data
             except Exception as e:
-                logger.error(f"处理第15号报文content-length失败: {e}")
+                # logger.error(f"处理第15号报文content-length失败: {e}")
                 try:
                     for cl_pattern in [b'content-length:', b'Content-Length:', b'content-length: ', b'Content-Length: ']:
                         cl_pos = headers_data.lower().find(cl_pattern.lower())
@@ -596,7 +596,7 @@ def update_content_length(headers_data, body_length):
                             if val_end > val_start:
                                 new_value = str(body_length).encode()
                                 headers_data = headers_data[:val_start] + new_value + headers_data[val_end:]
-                                logger.info(f"二进制替换第15号报文content-length: {body_length}")
+                                # logger.info(f"二进制替换第15号报文content-length: {body_length}")
                                 return headers_data
                     insertion_point = -1
                     for marker in [b'\r\n\r\n', b'\n\n', b'\r\n', b'\n']:
@@ -607,10 +607,10 @@ def update_content_length(headers_data, body_length):
                     if insertion_point > 0:
                         cl_header = b'\r\ncontent-length: ' + str(body_length).encode()
                         headers_data = headers_data[:insertion_point] + cl_header + headers_data[insertion_point:]
-                        logger.info(f"为第15号报文添加content-length: {body_length}")
+                        # logger.info(f"为第15号报文添加content-length: {body_length}")
                     return headers_data
                 except Exception as binary_e:
-                    logger.error(f"二进制替换content-length失败: {binary_e}")
+                    # logger.error(f"二进制替换content-length失败: {binary_e}")
                     return headers_data
         else:
             try:
@@ -627,7 +627,7 @@ def update_content_length(headers_data, body_length):
                             new_headers.append((name, str(body_length).encode()))
                         else:
                             new_headers.append((name, str(body_length)))
-                        logger.info(f"更新Content-Length: {value} -> {body_length}")
+                        # logger.info(f"更新Content-Length: {value} -> {body_length}")
                         modified = True
                     else:
                         new_headers.append((name, value))
@@ -643,16 +643,16 @@ def update_content_length(headers_data, body_length):
                         content_length_value = str(body_length).encode()
                     
                     new_headers.append((content_length_key, content_length_value))
-                    logger.info(f"添加Content-Length: {body_length}")
+                    # logger.info(f"添加Content-Length: {body_length}")
                 
                 # 编码新头部
                 new_headers_data = encoder.encode(new_headers)
-                logger.debug(f"HPACK编码后头部长度: {len(new_headers_data)}")
+                # logger.debug(f"HPACK编码后头部长度: {len(new_headers_data)}")
                 return new_headers_data
             except Exception as e:
-                logger.error(f"HPACK处理Content-Length错误: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
+                # logger.error(f"HPACK处理Content-Length错误: {e}")
+                # import traceback
+                # logger.error(traceback.format_exc())
                 try:
                     for cl_pattern in [b'content-length:', b'Content-Length:', b'content-length: ', b'Content-Length: ']:
                         cl_pos = headers_data.lower().find(cl_pattern.lower())
@@ -667,7 +667,7 @@ def update_content_length(headers_data, body_length):
                             if val_end > val_start:
                                 new_value = str(body_length).encode()
                                 headers_data = headers_data[:val_start] + new_value + headers_data[val_end:]
-                                logger.info(f"二进制替换Content-Length: {body_length}")
+                                # logger.info(f"二进制替换Content-Length: {body_length}")
                                 return headers_data
                     insertion_point = -1
                     for marker in [b'\r\n\r\n', b'\n\n', b'\r\n', b'\n']:
@@ -678,24 +678,24 @@ def update_content_length(headers_data, body_length):
                     if insertion_point > 0:
                         cl_header = b'\r\ncontent-length: ' + str(body_length).encode()
                         headers_data = headers_data[:insertion_point] + cl_header + headers_data[insertion_point:]
-                        logger.info(f"添加Content-Length: {body_length}")
+                        # logger.info(f"添加Content-Length: {body_length}")
                         return headers_data
                     # 最后尝试直接添加到末尾
                     cl_header = b'\r\ncontent-length: ' + str(body_length).encode()
                     headers_data = headers_data + cl_header
-                    logger.info(f"直接添加Content-Length到末尾: {body_length}")
+                    # logger.info(f"直接添加Content-Length到末尾: {body_length}")
                     return headers_data
                 except Exception as binary_e:
-                    logger.error(f"二进制替换Content-Length失败: {binary_e}")
+                    # logger.error(f"二进制替换Content-Length失败: {binary_e}")
                     return headers_data
         
         # 如果上面的所有处理都没有返回，返回原始数据
         return headers_data
         
     except Exception as e:
-        logger.error(f"更新Content-Length错误: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+        # logger.error(f"更新Content-Length错误: {e}")
+        # import traceback
+        # logger.error(traceback.format_exc())
         return headers_data
 
 def extract_frames(raw_data):
@@ -828,7 +828,7 @@ def apply_direct_binary_replacements(pkt, idx):
             if new_load != load:
                 modified = True
                 load = new_load
-                logger.info(f"对第{idx}号报文直接替换: {pattern} -> {replacement}")
+                # logger.info(f"对第{idx}号报文直接替换: {pattern} -> {replacement}")
     
     # 针对路径中的context_ID单独处理
     path_pattern = re.compile(br'/nsmf-pdusession/v1/sm-contexts/(\d+)')
@@ -842,7 +842,7 @@ def apply_direct_binary_replacements(pkt, idx):
             if new_load != load:
                 modified = True
                 load = new_load
-                logger.info(f"替换context_ID: {old_id} -> {context_ID}")
+                # logger.info(f"替换context_ID: {old_id} -> {context_ID}")
     
     # 第15号报文中的session ID单独处理
     if idx == 15:
@@ -857,12 +857,12 @@ def apply_direct_binary_replacements(pkt, idx):
                 if new_load != load:
                     modified = True
                     load = new_load
-                    logger.info(f"替换session_ID: {old_id} -> {context_ID}")
+                    # logger.info(f"替换session_ID: {old_id} -> {context_ID}")
     
     # 如果有修改，更新报文负载
     if modified:
         pkt[Raw].load = load
-        logger.info(f"对第{idx}号报文进行了直接的二进制替换")
+        # logger.info(f"对第{idx}号报文进行了直接的二进制替换")
     
     return modified
 
@@ -957,19 +957,18 @@ def main():
     parser = argparse.ArgumentParser(description='处理N16 PCAP文件中的HTTP/2帧')
     parser.add_argument('-i', '--input', dest='input_file', default="pcap/N16_create_16p.pcap",
                         help='输入PCAP文件路径')
-    parser.add_argument('-o', '--output', dest='output_file', default="pcap/N16_batch_100w.pcap",
+    parser.add_argument('-o', '--output', dest='output_file', default="pcap/N16_10000_01.pcap",
                         help='输出PCAP文件路径')
-    parser.add_argument('-n', '--num', dest='num', type=int, default=100,
+    parser.add_argument('-n', '--num', dest='num', type=int, default=10000,
                         help='循环次数，生成报文组数')
     args = parser.parse_args()
     PCAP_IN = args.input_file
     PCAP_OUT = args.output_file
     LOOP_NUM = args.num
 
-    # 注释掉详细日志
     # logger.info(f"开始批量处理文件 {PCAP_IN}，循环次数: {LOOP_NUM}")
     if not os.path.exists(PCAP_IN):
-        logger.error(f"输入文件不存在: {PCAP_IN}")
+        # logger.error(f"输入文件不存在: {PCAP_IN}")
         return
 
     orig_packets = rdpcap(PCAP_IN)
