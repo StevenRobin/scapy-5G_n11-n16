@@ -1,1 +1,0 @@
-{"type":"CREATED_RASSESSION_ACCEPT, XXX","gpsi":"msisndn-8613900000000","subject":{"subscribers":{"imsi":"460072200010001""}},"ueIpv4Address":"100.0.0.1","needS-nssai"true,"need2Authn":false,"dnn":"dnn600000001"
