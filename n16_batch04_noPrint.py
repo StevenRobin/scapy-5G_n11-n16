@@ -8,6 +8,7 @@ import re
 import os
 import logging
 
+'''
 # 配置日志
 import threading
 logging.basicConfig(
@@ -32,6 +33,7 @@ def safe_log(level, message):
             logger.warning(message)
         elif level == "error":
             logger.error(message)
+'''
 
 # ========== 变量定义 ==========
 # HTTP2/JSON/五元组相关变量
@@ -957,9 +959,9 @@ def main():
     parser = argparse.ArgumentParser(description='处理N16 PCAP文件中的HTTP/2帧')
     parser.add_argument('-i', '--input', dest='input_file', default="pcap/N16_create_16p.pcap",
                         help='输入PCAP文件路径')
-    parser.add_argument('-o', '--output', dest='output_file', default="pcap/N16_10000_01.pcap",
+    parser.add_argument('-o', '--output', dest='output_file', default="pcap/N16_1000000_01.pcap",
                         help='输出PCAP文件路径')
-    parser.add_argument('-n', '--num', dest='num', type=int, default=10000,
+    parser.add_argument('-n', '--num', dest='num', type=int, default=10,
                         help='循环次数，生成报文组数')
     args = parser.parse_args()
     PCAP_IN = args.input_file
