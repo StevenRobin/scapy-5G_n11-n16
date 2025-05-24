@@ -399,13 +399,95 @@ def inc_imei15(val, step=1):
     v += step
     return f"{v:015d}"
 
+def calculate_sv_for_continuous_imei(imei15: str) -> str:
+    """
+    计算适当的SV值，使得从IMEISV反推出来的IMEI与预期的imei15相同
+    
+    关键思路：
+    1. 从目标IMEI（15位）取前14位
+    2. 计算Luhn校验位（这是标准IMEI的第15位）
+    3. 如果目标IMEI的第15位就等于计算出的Luhn校验位，SV="00"
+    4. 如果不等于，需要特殊处理，将SV值设置为使得反推IMEI时能得到目标IMEI
+    """
+    imei14 = imei15[:14]
+    # 计算标准Luhn校验码
+    def calculate_luhn(digits):
+        total = 0
+        for i, d in enumerate(digits):
+            d = int(d)
+            # 偶数位（从0开始）乘2
+            if i % 2 == 1:  # 从右往左是偶数位，从左往右就是奇数索引
+                d *= 2
+                if d > 9:
+                    d -= 9
+            total += d
+        return (10 - (total % 10)) % 10
+    
+    # 计算标准校验码
+    standard_check = calculate_luhn(imei14)
+    # 目标IMEI的实际校验码（第15位）
+    actual_check = int(imei15[14])
+    
+    # 如果标准校验码等于目标校验码，使用常规SV值"00"
+    if standard_check == actual_check:
+        return "00"
+    else:
+        # 否则，使用特殊SV值，保持递增特性
+        # 这里用实际校验码作为SV的十位数，0作为个位数
+        # 这样可以通过SV值反推原始校验码
+        return f"{actual_check}0"
+
 def imei2imeisv(imei15: str) -> str:
     """
     根据15位IMEI转换为16位IMEISV。
-    这里举例：IMEISV = IMEI前14位 + '00'
-    实际请根据你的转测工具规则实现！
+    计算特殊SV使IMEISV反推IMEI时保持递增
     """
-    return imei15[:14] + "00"
+    sv = calculate_sv_for_continuous_imei(imei15)
+    return imei15[:14] + sv
+
+def imeisv_to_imei(imeisv: str) -> str:
+    """
+    16位IMEISV转15位IMEI（Luhn校验码）
+    """
+    imei14 = imeisv[:14]
+    # Luhn算法
+    def luhn(digits):
+        total = 0
+        for i, d in enumerate(digits):
+            d = int(d)
+            if i % 2 == 1:
+                d *= 2
+                if d > 9:
+                    d -= 9
+            total += d
+        return (10 - (total % 10)) % 10
+    check = luhn(imei14)
+    return imei14 + str(check)
+
+def inc_imei14(val, step=1):
+    """14位IMEI递增，保持14位，不足补0"""
+    v = int(val)
+    v += step
+    return f"{v:014d}"
+
+def imei14_to_imei15(imei14: str) -> str:
+    """14位IMEI转15位IMEI（自动加Luhn校验码）"""
+    def luhn(digits):
+        total = 0
+        for i, d in enumerate(digits):
+            d = int(d)
+            if i % 2 == 1:
+                d *= 2
+                if d > 9:
+                    d -= 9
+            total += d
+        return (10 - (total % 10)) % 10
+    check = luhn(imei14)
+    return imei14 + str(check)
+
+def imei14_to_imeisv(imei14: str, sv: str = "00") -> str:
+    """14位IMEI转16位IMEISV（+SV）"""
+    return imei14 + sv
 
 def update_global_vars(i):
     global auth1, context_ID, imsi1, pei1, gpsi1, dnn1, ismfId1, upf1, teid1, upf2, teid2, ueIP1, tac1, cgi1, pduSessionId1, sip1, dip1
@@ -413,7 +495,7 @@ def update_global_vars(i):
         "auth1": "40.0.0.1",
         "context_ID": "9000000001",
         "imsi1": "460012300000001",
-        "imei15": "861110100000001",  # 15位IMEI初始值
+        "imei14": "86111010000001",  # 14位IMEI初始值
         "gpsi1": "8613900000001",
         "dnn1": "dnn600000001",
         "ismfId1": "000500000001",
@@ -431,8 +513,9 @@ def update_global_vars(i):
     auth1 = inc_ip(base["auth1"], i)
     context_ID = inc_int(base["context_ID"], i)
     imsi1 = inc_int(base["imsi1"], i)
-    imei15 = inc_imei15(base["imei15"], i)      # 15位IMEI递增
-    pei1 = imei2imeisv(imei15)                  # 由IMEI转换为IMEISV
+    imei14 = inc_imei14(base["imei14"], i)         # 14位IMEI递增
+    imei15 = imei14_to_imei15(imei14)              # 15位IMEI（自动加Luhn）
+    pei1 = imei14_to_imeisv(imei14, "00")          # 16位IMEISV
     gpsi1 = inc_int(base["gpsi1"], i)
     dnn1 = "dnn" + inc_int(base["dnn1"][3:], i)
     ismfId1 = inc_int(base["ismfId1"], i)
@@ -565,9 +648,9 @@ def main():
     parser = argparse.ArgumentParser(description='处理N16 PCAP文件中的HTTP/2帧')
     parser.add_argument('-i', '--input', dest='input_file', default="pcap/N16_create_16p.pcap",
                         help='输入PCAP文件路径')
-    parser.add_argument('-o', '--output', dest='output_file', default="pcap/N16_10_04.pcap",
+    parser.add_argument('-o', '--output', dest='output_file', default="pcap/N16_10w_001.pcap",
                         help='输出PCAP文件路径')
-    parser.add_argument('-n', '--num', dest='num', type=int, default=10,
+    parser.add_argument('-n', '--num', dest='num', type=int, default=100000,
                         help='循环次数，生成报文组数')
     args = parser.parse_args()
     PCAP_IN = args.input_file
