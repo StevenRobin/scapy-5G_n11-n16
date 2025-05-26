@@ -648,9 +648,9 @@ def main():
     parser = argparse.ArgumentParser(description='处理N16 PCAP文件中的HTTP/2帧')
     parser.add_argument('-i', '--input', dest='input_file', default="pcap/N16_create_16p.pcap",
                         help='输入PCAP文件路径')
-    parser.add_argument('-o', '--output', dest='output_file', default="pcap/N16_10w_001.pcap",
+    parser.add_argument('-o', '--output', dest='output_file', default="pcap/N16_100w_001.pcap",
                         help='输出PCAP文件路径')
-    parser.add_argument('-n', '--num', dest='num', type=int, default=100000,
+    parser.add_argument('-n', '--num', dest='num', type=int, default=10000000,
                         help='循环次数，生成报文组数')
     args = parser.parse_args()
     PCAP_IN = args.input_file
@@ -661,25 +661,48 @@ def main():
         return
 
     orig_packets = rdpcap(PCAP_IN)
-    # 先序列化，避免多进程pickle慢
     import tempfile
     with tempfile.NamedTemporaryFile(delete=False) as tf:
         wrpcap(tf.name, orig_packets)
         orig_packets_bytes = tf.name
 
-    all_modified_packets = []
-    BATCH_SIZE = 10000  # 每批处理1万组，可根据内存调整
-    with concurrent.futures.ProcessPoolExecutor(max_workers=6) as executor:
-        results = executor.map(
-            process_one_group,
-            range(LOOP_NUM),
-            [orig_packets_bytes] * LOOP_NUM
-        )
-        # 用tqdm包裹results，显示进度条
-        for group_bytes in tqdm(results, total=LOOP_NUM, desc="Processing"):
-            for pkt_bytes in group_bytes:
-                all_modified_packets.append(Ether(pkt_bytes))
-    wrpcap(PCAP_OUT, all_modified_packets)
+    BATCH_SIZE = 1000000  # 每批100万
+    total_batches = LOOP_NUM // BATCH_SIZE
+    remain = LOOP_NUM % BATCH_SIZE
+
+    def get_outfile(base, idx):
+        base_name, ext = os.path.splitext(base)
+        return f"{base_name}_{idx+1:03d}{ext}"
+
+    batch_idx = 0
+    for i in range(total_batches):
+        all_modified_packets = []
+        with concurrent.futures.ProcessPoolExecutor(max_workers=6) as executor:
+            results = executor.map(
+                process_one_group,
+                range(i * BATCH_SIZE, (i + 1) * BATCH_SIZE),
+                [orig_packets_bytes] * BATCH_SIZE
+            )
+            for group_bytes in tqdm(results, total=BATCH_SIZE, desc=f"Batch {i+1}/{total_batches+1}"):
+                for pkt_bytes in group_bytes:
+                    all_modified_packets.append(Ether(pkt_bytes))
+        out_file = get_outfile(PCAP_OUT, batch_idx)
+        wrpcap(out_file, all_modified_packets)
+        batch_idx += 1
+
+    if remain > 0:
+        all_modified_packets = []
+        with concurrent.futures.ProcessPoolExecutor(max_workers=6) as executor:
+            results = executor.map(
+                process_one_group,
+                range(total_batches * BATCH_SIZE, LOOP_NUM),
+                [orig_packets_bytes] * remain
+            )
+            for group_bytes in tqdm(results, total=remain, desc=f"Batch {batch_idx+1}/{total_batches+1}"):
+                for pkt_bytes in group_bytes:
+                    all_modified_packets.append(Ether(pkt_bytes))
+        out_file = get_outfile(PCAP_OUT, batch_idx)
+        wrpcap(out_file, all_modified_packets)
 
 if __name__ == "__main__":
     main()
