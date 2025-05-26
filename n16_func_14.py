@@ -17,7 +17,7 @@ context_ID = "9000000001"
 imsi1 = "460012300000001"
 pei1 = ""
 gpsi1 = "8613900000001"
-dnn1 = "dnn600000001"
+dnn1 = "ABCD123456789012345678901234567890123456789012345678901234567890"
 ismfId1 = "000500000001"
 upf1 = "10.0.0.1"
 teid1 = "10000001"
@@ -499,7 +499,7 @@ def update_global_vars(i):
         "imsi1": "460012300000001",
         "imei14": "86111010000001",  # 14位IMEI初始值
         "gpsi1": "8613900000001",
-        "dnn1": "dnn600000001",
+        "dnn1": "ABCD123456789012345678901234567890123456789012345678901234567890",
         "ismfId1": "000500000001",
         "upf1": "10.0.0.1",
         "teid1": "10000001",
@@ -519,7 +519,7 @@ def update_global_vars(i):
     imei15 = imei14_to_imei15(imei14)              # 15位IMEI（自动加Luhn）
     pei1 = imei14_to_imeisv(imei14, "00")          # 16位IMEISV
     gpsi1 = inc_int(base["gpsi1"], i)
-    dnn1 = "dnn" + inc_int(base["dnn1"][3:], i)
+    #dnn1 = "dnn" + inc_int(base["dnn1"][4:], i)
     ismfId1 = inc_int(base["ismfId1"], i)
     upf1 = inc_ip(base["upf1"], i)
     teid1 = inc_hex(base["teid1"], i, width=len(base["teid1"]))   # 按hex递增
@@ -656,9 +656,9 @@ def main():
     parser = argparse.ArgumentParser(description='处理N16 PCAP文件中的HTTP/2帧')
     parser.add_argument('-i', '--input', dest='input_file', default="pcap/N16_create_16p.pcap",
                         help='输入PCAP文件路径')
-    parser.add_argument('-o', '--output', dest='output_file', default="pcap/N16_100w_001.pcap",
+    parser.add_argument('-o', '--output', dest='output_file', default="pcap/N16_DNN_64B_01.pcap",
                         help='输出PCAP文件路径')
-    parser.add_argument('-n', '--num', dest='num', type=int, default=10000000,
+    parser.add_argument('-n', '--num', dest='num', type=int, default=1,
                         help='循环次数，生成报文组数')
     args = parser.parse_args()
     PCAP_IN = args.input_file
