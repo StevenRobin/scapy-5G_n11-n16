@@ -1,0 +1,19 @@
+1. 原始pcap是5G UE漫游的信令（N16接口）的流量，包含上下文请求、PDU会话建立、PDU会话修改；
+2. 修改pcap需要用到的python主要功能模块有scapy、hpack、json、re等；
+3. pcap需要修改的地方包括；
+4. pcap流的客户端ip地址设置变量sip1（初始值sip1=40.0.0.1），服务端ip设置变量dip1（初始值dip1=50.0.0.1）；
+4. 第12个报文authority字段值设置变量auth1，auth1=dip1；
+5. 第46个报文location字段值的host部分（原始报文的host值是123.1.1.10）也使用变量auth1；
+6. 第47个报文authority字段值设置变量auth2，auth2=sip1；
+7. 第47个报文path字段值的supi数字部分设置变量imsi1，imsi1初始值为460012300000001；
+8. 第47个报文第2个http2头的PDU address information（wireshark过滤类型nas-5gs.sm.pdu_addr_inf_ipv4）字段值设置变量PduAddr1，PduAddr1初始值为100.0.0.1（4字节16进制）；
+9. 第47个报文第2个http2头的DNN（wireshark过滤类型nas-5gs.cmn.dnn）字段值设置变量DNN1，DNN1初始值为dnn600000001（ascii），DNN字段TLV的Length为字符长度+1；
+10. 第47个报文第2个http2头的gTPTunnel字段前4字节（wireshark过滤类型ngap.TransportLayerAddressIPv4）设置变量UpfIP1,UpfIP1初始值为80.0.0.1（4字节16进制）；
+11. 第47个报文第2个http2头的gTPTunnel字段后4字节（wireshark过滤类型ngap.gTP_TEID）设置变量UpTeid1，UpTeid1初始值为0x70000001（4字节16进制）；
+12. 第49个报文authority字段值也设置变量auth1；
+13. 第49个报文path字段的supi数字部分也设置变量imsi1；
+14. 第49个报文第2个http2头的gTPTunnel字段前4字节（wireshark过滤类型ngap.TransportLayerAddressIPv4）设置变量UpfIP2,UpfIP2初始值为70.0.0.1（4字节16进制）；
+15. 第49个报文第2个http2头的gTPTunnel字段后4字节（wireshark过滤类型ngap.gTP_TEID）设置变量UpTeid2，UpTeid2初始值为0x30000001（4字节16进制）；
+16. 第12个报文json需要修改的键值中如下key的变量设置和初始值均参考n6_batch15_perf.py（dnn、gpsi、pei、supi、nrCellId、tac），另外json中smContextStatusUri值的host部分（121.1.1.10）也设置变量sip1；
+17. content-length、length、seq num、checksum等重新计算的逻辑参考n6_batch15_perf.py；
+18. 批量for循环、进度条、多线程等逻辑参考n6_batch15_perf.py；
