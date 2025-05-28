@@ -15,7 +15,7 @@ TARGET_FIELDS = {
 ORIGINAL_IMSI = "imsi-460030100000000"
 MODIFIED_IMSI = "imsi-460030100000022"
 PCAP_IN = "pcap/N11_create_50p.pcap"
-PCAP_OUT = "pcap/N11_108.pcap"
+PCAP_OUT = "pcap/N11_1102.pcap"
 
 MODIFY_PATH_PREFIX = "/nsmf-pdusession/v1/sm-contexts/"
 MODIFY_PATH_SUFFIX = "-5/modify"
