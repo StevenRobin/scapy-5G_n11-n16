@@ -11,6 +11,8 @@ from tqdm import tqdm
 import gc
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
+import random
+import hashlib
 
 class HTTP2FrameHeader(Packet):
     name = "HTTP2FrameHeader"
@@ -123,6 +125,12 @@ def process_packet(pkt, seq_diff, ip_replacements, original_length=None, new_len
         if pkt[IP].dst in ip_replacements:
             pkt[IP].dst = ip_replacements[pkt[IP].dst]
     if pkt.haslayer(TCP):
+        # 上行：源IP为sip1，源端口设为sport1
+        if pkt[IP].src == sip1:
+            pkt[TCP].sport = sport1
+        # 下行：源IP为dip1，目的端口设为sport1
+        if pkt[IP].src == dip1:
+            pkt[TCP].dport = sport1
         flow = (pkt[IP].src, pkt[IP].dst, pkt[TCP].sport, pkt[TCP].dport)
         rev_flow = (pkt[IP].dst, pkt[IP].src, pkt[TCP].dport, pkt[TCP].sport)
         if flow not in seq_diff:
@@ -454,7 +462,7 @@ def imei14_to_imeisv(imei14: str, sv: str = "00") -> str:
     return imei14 + sv
 
 def update_global_vars(i, ip_num=1000):
-    global auth1, context_ID, imsi1, pei1, gpsi1, dnn1, ismfId1, upf1, teid1, upf2, teid2, ueIP1, tac1, cgi1, pduSessionId1, sip1, dip1
+    global auth1, context_ID, imsi1, pei1, gpsi1, dnn1, ismfId1, upf1, teid1, upf2, teid2, ueIP1, tac1, cgi1, pduSessionId1, sip1, dip1, sport1
     base = {
         "auth1": "40.0.0.1",
         "context_ID": "9000000001",
@@ -493,6 +501,8 @@ def update_global_vars(i, ip_num=1000):
     pduSessionId1 = inc_int(base["pduSessionId1"], i)
     sip1 = inc_ip(base["sip1"], i % ip_num)
     dip1 = inc_ip(base["dip1"], i % ip_num)
+    # sport1唯一且可控，避免五元组冲突
+    sport1 = 10000 + ((i // ip_num) % 50000)
     global IP_REPLACEMENTS, JSON_FIELD_MAP
     IP_REPLACEMENTS = {
         "200.20.20.26": sip1,

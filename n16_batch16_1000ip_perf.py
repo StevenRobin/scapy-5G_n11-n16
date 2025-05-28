@@ -502,7 +502,7 @@ def update_global_vars(i, ip_num=1000):
     sip1 = inc_ip(base["sip1"], i % ip_num)
     dip1 = inc_ip(base["dip1"], i % ip_num)
     # sport1唯一且可控，避免五元组冲突
-    sport1 = 10000 + ((i // ip_num) % 50000)
+    sport1 = 10001 + ((i // ip_num) % 50000)
     global IP_REPLACEMENTS, JSON_FIELD_MAP
     IP_REPLACEMENTS = {
         "200.20.20.26": sip1,
@@ -649,6 +649,10 @@ def main():
         wrpcap(tf.name, orig_packets)
         orig_packets_bytes = tf.name
 
+    # 主动释放原始PCAP数据
+    del orig_packets
+    gc.collect()
+
     BATCH_SIZE = 1000000  # 每批100万
     total_batches = LOOP_NUM // BATCH_SIZE
     remain = LOOP_NUM % BATCH_SIZE
@@ -689,6 +693,10 @@ def main():
             gc.collect()
     # 等待所有写任务完成
     file_writer.shutdown(wait=True)
+
+    # 删除临时文件
+    os.remove(orig_packets_bytes)
+    gc.collect()
 
 if __name__ == "__main__":
     main()
