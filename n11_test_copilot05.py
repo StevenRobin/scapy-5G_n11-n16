@@ -1,13 +1,19 @@
-from scapy.all import *
 from scapy.packet import Packet
 from scapy.fields import BitField, ByteField
+from scapy.layers.inet import IP, TCP
+from scapy.utils import wrpcap, rdpcap
+from scapy.layers.l2 import Ether
+from scapy.all import Raw
 from hpack import Encoder, Decoder
 import json
 import re
 import copy
 from tqdm import tqdm
+from typing import Dict, Any, List, Optional
+import os
+import concurrent.futures
 
-# 全局配置参数（只保留一份）
+# 全局配置参数
 sip1 = "40.0.0.1"
 dip1 = "50.0.0.1"
 auth1 = dip1
@@ -28,27 +34,29 @@ UpTeid2 = 0x30000001
 CLIENT_IP_OLD = "121.1.1.10"
 SERVER_IP_OLD = "123.1.1.10"
 
-def luhn_checksum(numstr):
+SV_DEFAULT = "00"
+RE_IMSI = re.compile(r'imsi-\d+')
+
+def luhn_checksum(numstr: str) -> int:
     """计算Luhn校验和（用于IMEI第15位）"""
     digits = [int(d) for d in numstr]
     oddsum = sum(digits[-1::-2])
-    evensum = sum([sum(divmod(2 * d, 10)) for d in digits[-2::-2]])
+    evensum = sum(sum(divmod(2 * d, 10)) for d in digits[-2::-2])
     return (oddsum + evensum) % 10
 
-def imei14_to_imei15(imei14):
+def imei14_to_imei15(imei14: str) -> str:
     """14位IMEI转15位IMEI（加Luhn校验）"""
     check = luhn_checksum(imei14 + '0')
     check_digit = (10 - check) % 10
     return imei14 + str(check_digit)
 
-def imei14_to_imeisv(imei14, sv="00"):
+def imei14_to_imeisv(imei14: str, sv: str = SV_DEFAULT) -> str:
     """14位IMEI转16位IMEISV"""
     return imei14 + sv
 
-# 示例：变量赋值
-imei14 = "86111010000001"
+# 示例变量赋值（去除重复）
 imei15 = imei14_to_imei15(imei14)
-pei1 = imei14_to_imeisv(imei14, "00")  # 16位IMEISV
+pei1 = imei14_to_imeisv(imei14)
 
 TARGET_FIELDS = {
     "supi": f"imsi-{imsi1}",
@@ -62,24 +70,23 @@ ORIGINAL_IMSI = "imsi-460030100000000"
 MODIFIED_IMSI = "imsi-460030100000022"
 
 PCAP_IN = "pcap/N11_create_50p.pcap"
-PCAP_OUT = "pcap/N11_1103.pcap"
+PCAP_OUT = "pcap/N11_1217.pcap"
 
 MODIFY_PATH_PREFIX = "/nsmf-pdusession/v1/sm-contexts/"
 MODIFY_PATH_SUFFIX = "-5/modify"
 LOCATION_HEADER_PREFIX = "http://123.1.1.10/nsmf-pdusession/v1/sm-contexts/"
 LOCATION_HEADER_SUFFIX = "-5"
 
-
-# 递增函数
-def inc_ip(ip, step=1):
+def inc_ip(ip: str, step: int = 1) -> str:
+    """IP自增"""
     parts = list(map(int, ip.split('.')))
     val = (parts[0]<<24) + (parts[1]<<16) + (parts[2]<<8) + parts[3] + step
     return f"{(val>>24)&0xFF}.{(val>>16)&0xFF}.{(val>>8)&0xFF}.{val&0xFF}"
 
-def inc_int(val, step=1):
+def inc_int(val: str, step: int = 1) -> str:
     return str(int(val) + step)
 
-def inc_hex(val, step=1):
+def inc_hex(val: int, step: int = 1) -> int:
     return val + step
 
 class HTTP2FrameHeader(Packet):
@@ -92,25 +99,19 @@ class HTTP2FrameHeader(Packet):
         BitField("stream_id", 0, 31)
     ]
 
-def extract_http2_frames(raw):
+def extract_http2_frames(raw: bytes) -> List[Dict[str, Any]]:
+    """提取HTTP2帧"""
     offset = 0
     frames = []
-    while offset < len(raw):
-        if offset + 9 > len(raw):
-            break
+    while offset + 9 <= len(raw):
         frame_header = HTTP2FrameHeader(raw[offset:offset+9])
         frame_len = frame_header.length
-        frame_type = frame_header.type
-        frame_end = offset + 9 + frame_len
-        if frame_end > len(raw):
-            frame_end = len(raw)
-            frame_len = frame_end - (offset + 9)
-            frame_header.length = frame_len
+        frame_end = min(offset + 9 + frame_len, len(raw))
         frame_data = raw[offset+9:frame_end]
         frames.append({
             'offset': offset,
             'header': frame_header,
-            'type': frame_type,
+            'type': frame_header.type,
             'data': frame_data,
             'end': frame_end
         })
@@ -123,19 +124,25 @@ def process_http2_headers_frame(frame_data, pkt_idx=None, new_content_length=Non
         headers = decoder.decode(frame_data)
         new_headers = []
         modified = False
-        # 1. 先移除所有content-length
         for name, value in headers:
             if name.lower() == "content-length":
                 print(f"[DEBUG] 移除原有content-length: {value}")
                 continue
+            orig_type = type(value)
             # 其它字段正常处理
             if pkt_idx == 11 and name.lower() == ":authority":
                 print(f"[DEBUG] 替换 authority: {value} -> {auth1}")
                 value = auth1
                 modified = True
             if pkt_idx == 45 and name.lower() == "location":
-                value = value.replace("123.1.1.10", auth1)
+                # 兼容bytes/bytearray/memoryview
+                if isinstance(value, (bytes, bytearray, memoryview)):
+                    value = value.tobytes() if isinstance(value, memoryview) else bytes(value)
+                    value = value.decode(errors='ignore')
+                value = str(value).replace("123.1.1.10", auth1)
                 modified = True
+                if orig_type in (bytes, bytearray, memoryview):
+                    value = value.encode()
             if pkt_idx == 46 and name.lower() == ":authority":
                 print(f"[DEBUG] 替换 authority: {value} -> {auth2}")
                 value = auth2
@@ -144,13 +151,22 @@ def process_http2_headers_frame(frame_data, pkt_idx=None, new_content_length=Non
                 value = auth1
                 modified = True
             if pkt_idx == 46 and name.lower() == ":path":
-                value = re.sub(r'imsi-\d+', f'imsi-{imsi1}', value)
+                if isinstance(value, (bytes, bytearray, memoryview)):
+                    value = value.tobytes() if isinstance(value, memoryview) else bytes(value)
+                    value = value.decode(errors='ignore')
+                value = re.sub(r'imsi-\d+', f'imsi-{imsi1}', str(value))
                 modified = True
+                if orig_type in (bytes, bytearray, memoryview):
+                    value = value.encode()
             if pkt_idx == 48 and name.lower() == ":path":
-                value = re.sub(r'imsi-\d+', f'imsi-{imsi1}', value)
+                if isinstance(value, (bytes, bytearray, memoryview)):
+                    value = value.tobytes() if isinstance(value, memoryview) else bytes(value)
+                    value = value.decode(errors='ignore')
+                value = re.sub(r'imsi-\d+', f'imsi-{imsi1}', str(value))
                 modified = True
+                if orig_type in (bytes, bytearray, memoryview):
+                    value = value.encode()
             new_headers.append((name, value))
-        # 2. 最后插入一个新的content-length
         if new_content_length is not None:
             print(f"[DEBUG] 插入新的content-length: {new_content_length}")
             new_headers.append(("content-length", str(new_content_length)))
@@ -241,17 +257,37 @@ def batch_modify_targets(pkt_http2_info, target_fields, original_imsi, modified_
             all_new_payloads.append(None)
             continue
         new_frames = []
+        # 先处理DATA帧，拿到新内容长度
+        new_content_length = None
+        data_frame_new_data = None
+        for entry in pkt_info:
+            if entry['type'] == 'data':
+                # 关键报文DATA帧精确处理
+                if pkt_idx in (46, 48):
+                    data_frame_new_data = process_http2_data_frame_precise(pkt_idx, entry['data'], target_fields)
+                else:
+                    data_frame_new_data = process_http2_data_frame(entry['data'], target_fields)
+                new_content_length = len(data_frame_new_data)
+                entry['__new_data'] = data_frame_new_data
         for entry in pkt_info:
             frame = entry['frame']
             if entry['type'] == 'headers':
-                frame_data = entry['data']
-                new_frame_data = process_http2_headers_frame(frame_data, pkt_idx=pkt_idx)
+                # 关键报文严格重建
+                if pkt_idx in (11, 45, 46, 48):
+                    new_frame_data = process_http2_headers_frame_precise(pkt_idx, new_content_length)
+                    if new_frame_data is None:
+                        new_frame_data = process_http2_headers_frame(entry['data'], pkt_idx=pkt_idx, new_content_length=new_content_length)
+                else:
+                    new_frame_data = process_http2_headers_frame(entry['data'], pkt_idx=pkt_idx, new_content_length=new_content_length)
                 frame_header = frame['header']
                 frame_header.length = len(new_frame_data)
                 new_frames.append(frame_header.build() + new_frame_data)
             elif entry['type'] == 'data':
-                frame_data = entry['data']
-                new_frame_data = process_http2_data_frame(frame_data, target_fields)
+                # 直接用已处理的新DATA帧内容
+                if '__new_data' in entry:
+                    new_frame_data = entry['__new_data']
+                else:
+                    new_frame_data = process_http2_data_frame(entry['data'], target_fields)
                 frame_header = frame['header']
                 frame_header.length = len(new_frame_data)
                 new_frames.append(frame_header.build() + new_frame_data)
@@ -301,12 +337,121 @@ def update_packets(original_packets, all_new_payloads):
         modified_packets.append(pkt)
     return modified_packets
 
-if __name__ == "__main__":
-    print(f"开始处理文件 {PCAP_IN}")
-    original_packets = rdpcap(PCAP_IN)
+def process_http2_headers_frame_precise(pkt_idx, new_content_length=None):
+    """
+    针对关键报文（12、46、47、49）严格重建HTTP/2头部，顺序和内容100%准确。
+    """
+    encoder = Encoder()
+    # 12、46、47、49为Wireshark序号，Python下从0计数，需-1
+    if pkt_idx == 11:  # 第12个报文
+        headers = [
+            (":method", "POST"),
+            (":scheme", "http"),
+            (":authority", auth1),
+            (":path", "/nsmf-pdusession/v1/sm-contexts"),
+            ("content-type", "application/json"),
+            ("content-length", str(new_content_length) if new_content_length else "0"),
+            ("accept", "application/json"),
+            ("user-agent", "AMF"),  # 保持原始值AMF
+        ]
+        print(f"[精确重建] pkt12 HEADERS: {headers}")
+        return encoder.encode(headers)
+    elif pkt_idx == 45:  # 第46个报文
+        headers = [
+            (":status", "201"),
+            ("content-type", "application/json"),
+            ("location", f"http://{auth1}/nsmf-pdusession/v1/sm-contexts/{imsi1}-5"),
+            ("date", "Wed, 22 May 2025 02:48:05 GMT"),
+            ("content-length", str(new_content_length) if new_content_length else "0"),
+        ]
+        print(f"[精确重建] pkt46 HEADERS: {headers}")
+        return encoder.encode(headers)
+    elif pkt_idx == 46:  # 第47个报文
+        headers = [
+            (":method", "POST"),
+            (":scheme", "http"),
+            (":authority", auth2),
+            (":path", f"/namf-comm/v1/ue-contexts/imsi-{imsi1}/n1-n2-messages"),
+            ("content-type", "application/json"),
+            ("content-length", str(new_content_length) if new_content_length else "0"),
+            ("user-agent", "SMF"),  # 保持原始值SMF，无accept字段
+        ]
+        print(f"[精确重建] pkt47 HEADERS: {headers}")
+        return encoder.encode(headers)
+    elif pkt_idx == 48:  # 第49个报文
+        headers = [
+            (":method", "POST"),
+            (":scheme", "http"),
+            (":authority", auth1),
+            (":path", f"/nsmf-pdusession/v1/sm-contexts/imsi-{imsi1}-5/modify"),
+            ("content-type", "application/json"),
+            ("content-length", str(new_content_length) if new_content_length else "0"),
+            ("accept", "application/json"),
+            ("user-agent", "SMF"),  # 保持原始值SMF
+        ]
+        print(f"[精确重建] pkt49 HEADERS: {headers}")
+        return encoder.encode(headers)
+    else:
+        return None
+
+
+def process_http2_data_frame_precise(pkt_idx, frame_data, fields):
+    """
+    针对关键报文（47、49）DATA帧，精确替换gTPTunnel、DNN、PduAddr等二进制字段。
+    这里只做结构，具体二进制替换可后续细化。
+    """
+    # 这里只做调试输出，实际可按需求补充二进制替换
+    if pkt_idx in (46, 48):
+        print(f"[精确重建] pkt{pkt_idx+1} DATA帧处理，原始长度: {len(frame_data)}")
+        # TODO: 按需实现gTPTunnel、DNN、PduAddr等字段的二进制替换
+        # 可参考n16_batch16_1000ip_perf.py的apply_direct_binary_replacements等
+        # 这里只返回原始数据
+        return frame_data
+    else:
+        return frame_data
+
+def process_one_batch(original_packets, batch_idx, total_batches, target_fields, original_imsi, modified_imsi):
+    print(f"[BATCH] 处理第{batch_idx+1}/{total_batches}批，共{len(original_packets)}包")
     pkt_http2_info = batch_collect_targets(original_packets)
-    all_new_payloads = batch_modify_targets(pkt_http2_info, TARGET_FIELDS, ORIGINAL_IMSI, MODIFIED_IMSI)
-    # 只保留一种主循环处理方式
+    all_new_payloads = batch_modify_targets(pkt_http2_info, target_fields, original_imsi, modified_imsi)
     new_packets = update_packets(original_packets, all_new_payloads)
-    print(f"保存修改到 {PCAP_OUT}")
-    wrpcap(PCAP_OUT, new_packets)
+    return new_packets
+
+def main_batch(
+    pcap_in=PCAP_IN,
+    pcap_out=PCAP_OUT,
+    loop_num=1,
+    batch_size=50,
+    target_fields=TARGET_FIELDS,
+    original_imsi=ORIGINAL_IMSI,
+    modified_imsi=MODIFIED_IMSI
+):
+    print(f"开始批量处理文件 {pcap_in}")
+    original_packets = rdpcap(pcap_in)
+    total_batches = (loop_num + batch_size - 1) // batch_size
+    all_packets = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        futures = []
+        for batch_idx in range(total_batches):
+            start = batch_idx * batch_size
+            end = min((batch_idx + 1) * batch_size, loop_num)
+            # 每批复制原始包
+            batch_packets = [copy.deepcopy(pkt) for pkt in original_packets]
+            futures.append(executor.submit(
+                process_one_batch, batch_packets, batch_idx, total_batches, target_fields, original_imsi, modified_imsi
+            ))
+        for f in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="批量进度"):
+            batch_result = f.result()
+            all_packets.extend(batch_result)
+    print(f"保存所有批量结果到 {pcap_out}")
+    wrpcap(pcap_out, all_packets)
+    print(f"全部批量处理完成，总输出包数: {len(all_packets)}")
+
+if __name__ == "__main__":
+    # main_batch参数可根据需要调整
+    main_batch(
+        pcap_in=PCAP_IN,
+        pcap_out=PCAP_OUT,
+        loop_num=1,  # 如需大批量可设为1000/10000等
+        batch_size=50
+    )
