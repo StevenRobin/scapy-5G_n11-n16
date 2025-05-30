@@ -15,7 +15,7 @@ import concurrent.futures
 from collections import defaultdict
 
 # 全局配置参数
-sip1 = "40.0.0.1"
+sip1 = "30.0.0.1"
 dip1 = "50.0.0.1"
 auth1 = dip1
 auth2 = sip1
@@ -67,11 +67,9 @@ TARGET_FIELDS = {
     "tac": tac1,
     "nrCellId": cgi1
 }
-ORIGINAL_IMSI = "imsi-460030100000000"
-MODIFIED_IMSI = "imsi-460030100000022"
 
 PCAP_IN = "pcap/N11_create_50p_portX.pcap"
-PCAP_OUT = "pcap/N11_1w_01.pcap"
+PCAP_OUT = "pcap/N11_2001.pcap"
 
 MODIFY_PATH_PREFIX = "/nsmf-pdusession/v1/sm-contexts/"
 MODIFY_PATH_SUFFIX = "-5/modify"
@@ -185,46 +183,53 @@ def process_http2_headers_frame(frame_data, pkt_idx=None, new_content_length=Non
 def modify_json_data(payload, fields):
     try:
         if not payload or not payload.strip():
+            print("[跳过空数据段]")
             return payload
-        try:
-            if isinstance(payload, bytes):
+        # 兼容bytes输入
+        if isinstance(payload, bytes):
+            try:
                 payload_str = payload.decode('utf-8')
-            else:
-                payload_str = payload
-        except UnicodeDecodeError:
+            except Exception:
+                payload_str = payload.decode('latin1', errors='ignore')
+        else:
             payload_str = payload
         data = json.loads(payload_str)
         modified = False
-        def recursive_modify(obj):
+        def recursive_modify(obj, modifications):
             nonlocal modified
             if isinstance(obj, dict):
-                for key, value in list(obj.items()):
-                    # 1. 目标字段直接替换
-                    for target in fields:
-                        if key.lower() == target.lower():
-                            if value != fields[target]:
-                                print(f"[JSON修改] {key}: {value} -> {fields[target]}")
-                                obj[key] = fields[target]
+                for key, value in obj.items():
+                    lkey = key.lower()
+                    for target in modifications:
+                        if target.lower() == lkey:
+                            # 类型兼容
+                            target_val = modifications[target]
+                            if isinstance(value, (int, float)) and isinstance(target_val, str):
+                                try:
+                                    target_val_cast = type(value)(target_val)
+                                except Exception:
+                                    target_val_cast = target_val
+                            else:
+                                target_val_cast = target_val
+                            if value != target_val_cast:
+                                print(f"[JSON修改] {key}: {value} -> {target_val_cast}")
+                                obj[key] = target_val_cast
                                 modified = True
-                    # 2. smContextStatusUri特殊处理
+                    # smContextStatusUri特殊处理
                     if key == "smContextStatusUri" and isinstance(value, str):
-                        # 替换host部分为sip1
                         new_val = re.sub(r"(?<=://)[^/:]+", sip1, value)
                         if value != new_val:
-                            print(f"[JSON修改] smContextStatusUri: {value} -> {new_val}")
+                            print(f"[JSON修改] {key}: {value} -> {new_val}")
                             obj[key] = new_val
                             modified = True
                     if isinstance(value, (dict, list)):
-                        recursive_modify(value)
+                        recursive_modify(value, modifications)
             elif isinstance(obj, list):
                 for item in obj:
                     if isinstance(item, (dict, list)):
-                        recursive_modify(item)
-        recursive_modify(data)
-        if modified:
-            return json.dumps(data, indent=None, separators=(',', ':')).encode()
-        else:
-            return payload
+                        recursive_modify(item, modifications)
+        recursive_modify(data, fields)
+        return json.dumps(data, separators=(',', ':')).encode() if modified else payload
     except Exception as e:
         print(f"JSON处理错误: {str(e)}")
         return payload
@@ -285,11 +290,14 @@ def batch_modify_targets(pkt_http2_info, target_fields, original_imsi, modified_
         data_frame_new_data = None
         for entry in pkt_info:
             if entry['type'] == 'data':
-                # 关键报文DATA帧精确处理
-                if pkt_idx in (46, 48):
-                    data_frame_new_data = process_http2_data_frame_precise(pkt_idx, entry['data'], target_fields)
+                # 仅第12个报文做json字段替换
+                if pkt_idx == 11:
+                    if pkt_idx in (46, 48):
+                        data_frame_new_data = process_http2_data_frame_precise(pkt_idx, entry['data'], target_fields)
+                    else:
+                        data_frame_new_data = process_http2_data_frame(entry['data'], target_fields)
                 else:
-                    data_frame_new_data = process_http2_data_frame(entry['data'], target_fields)
+                    data_frame_new_data = entry['data']
                 new_content_length = len(data_frame_new_data)
                 entry['__new_data'] = data_frame_new_data
         for entry in pkt_info:
@@ -306,11 +314,11 @@ def batch_modify_targets(pkt_http2_info, target_fields, original_imsi, modified_
                 frame_header.length = len(new_frame_data)
                 new_frames.append(frame_header.build() + new_frame_data)
             elif entry['type'] == 'data':
-                # 直接用已处理的新DATA帧内容
+                # 只对第12个报文用已处理的新DATA帧内容，其它直接原始
                 if '__new_data' in entry:
                     new_frame_data = entry['__new_data']
                 else:
-                    new_frame_data = process_http2_data_frame(entry['data'], target_fields)
+                    new_frame_data = entry['data']
                 frame_header = frame['header']
                 frame_header.length = len(new_frame_data)
                 new_frames.append(frame_header.build() + new_frame_data)
@@ -489,18 +497,12 @@ def main_batch(
             futures.append(executor.submit(
                 process_one_batch, original_packets, batch_idx, base_sip, base_dip, orig2new_sport, ip_num
             ))
-        for batch_idx, f in enumerate(tqdm(concurrent.futures.as_completed(futures), total=total_batches)):
-            batch_packets = f.result()
-            out_file = f"{pcap_out[:-5]}_{batch_idx+1:03d}.pcap"
-            wrpcap(out_file, batch_packets)
-            del batch_packets
-    print("全部批量处理完成。")
-
-if __name__ == "__main__":
-    main_batch(
-        pcap_in=PCAP_IN,
-        pcap_out=PCAP_OUT,
-        loop_num=1000,  # 可根据需要调整
-        batch_size=1000,
-        ip_num=1000
-    )
+        for batch_idx, f in enumerate(tqdm(futures)):
+            try:
+                new_packets = f.result()
+                out_path = pcap_out.replace('.pcap', f'_batch{batch_idx+1}.pcap')
+                wrpcap(out_path, new_packets)
+                print(f"[批量输出] {out_path} 共{len(new_packets)}包")
+            except Exception as e:
+                print(f"[批量处理异常] batch{batch_idx+1}: {e}")
+    print("批量处理完成！")
