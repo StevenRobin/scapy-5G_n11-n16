@@ -1,6 +1,15 @@
+import threading
+import gc
 from scapy.all import rdpcap, TCP, Raw, IP
 from hpack import Decoder
 import binascii
+import re
+
+# 变量初始化
+auth2 = None
+pduSessionId2 = 10000001
+sip2 = None
+dip2 = None
 
 def extract_http2_frames(raw_data):
     """提取TCP包内所有HTTP/2帧 (返回frame_type, headers_block, offset)"""
@@ -41,6 +50,22 @@ def get_frame_type_name(type_id):
         0x9: "CONTINUATION"
     }
     return frame_types.get(type_id, f"UNKNOWN({type_id})")
+
+def extract_auth_and_pdu(headers):
+    """从headers中提取auth和pduSessionId"""
+    auth_val = None
+    pdu_id = None
+    for name, value in headers:
+        name_str = name.decode('utf-8') if isinstance(name, bytes) else str(name)
+        value_str = value.decode('utf-8') if isinstance(value, bytes) else str(value)
+        if name_str.lower() == "authorization":
+            auth_val = value_str
+        if name_str.lower() == ":path":
+            # 匹配pdu-sessions/后面的数字
+            m = re.search(r"pdu-sessions/(\d+)", value_str)
+            if m:
+                pdu_id = int(m.group(1))
+    return auth_val, pdu_id
 
 def print_selected_headers_from_pcap(pcap_file, target_indices=[9, 11, 13]):
     packets = rdpcap(pcap_file)
@@ -98,6 +123,70 @@ def print_selected_headers_from_pcap(pcap_file, target_indices=[9, 11, 13]):
                     except Exception:
                         pass  # 忽略非目标包的解析错误
 
+def process_packet(pkt, idx, target_indices, flow_decoders, result_dict):
+    global auth2, pduSessionId2, sip2, dip2
+    if not (pkt.haslayer(TCP) and pkt.haslayer(Raw)):
+        return
+
+    flow = None
+    if pkt.haslayer(IP):
+        flow = (pkt[IP].src, pkt[TCP].sport, pkt[IP].dst, pkt[TCP].dport)
+
+    if flow and flow not in flow_decoders:
+        flow_decoders[flow] = Decoder()
+    decoder = flow_decoders.get(flow, Decoder())
+
+    raw_data = bytes(pkt[Raw].load)
+    frames = extract_http2_frames(raw_data)
+
+    if idx in target_indices:
+        for frame_idx, (type_, flags, stream_id, payload, offset) in enumerate(frames):
+            if type_ == 0x01:  # HEADERS帧
+                try:
+                    headers = decoder.decode(payload)
+                    auth_val, pdu_id = extract_auth_and_pdu(headers)
+                    if auth_val:
+                        auth2 = auth_val
+                        dip2 = pkt[IP].dst
+                    if pdu_id:
+                        pduSessionId2 = pdu_id
+                    sip2 = pkt[IP].src
+                    # 记录结果
+                    result_dict[idx] = {
+                        "auth2": auth2,
+                        "pduSessionId2": pduSessionId2,
+                        "sip2": sip2,
+                        "dip2": dip2
+                    }
+                except Exception:
+                    pass
+
+def process_pcap_multithread(pcap_file, target_indices=[9, 13]):
+    packets = rdpcap(pcap_file)
+    flow_decoders = {}
+    threads = []
+    result_dict = {}
+
+    for idx, pkt in enumerate(packets, 1):
+        t = threading.Thread(target=process_packet, args=(pkt, idx, target_indices, flow_decoders, result_dict))
+        threads.append(t)
+        t.start()
+        # 控制线程数量，防止过多线程
+        if len(threads) > 20:
+            for t in threads:
+                t.join()
+            threads = []
+            gc.collect()
+
+    for t in threads:
+        t.join()
+    gc.collect()
+    return result_dict
+
 if __name__ == "__main__":
-    pcap_path = "pcap/N16_release_18p.pcap"  # 替换为你的pcap文件路径
-    print_selected_headers_from_pcap(pcap_path)
+    pcap_path = "pcap/N16_release_18p.pcap"
+    result = process_pcap_multithread(pcap_path)
+    print("提取结果：")
+    for idx in sorted(result):
+        print(f"第{idx}包: {result[idx]}")
+    print(f"\n最终变量：auth2={auth2}, pduSessionId2={pduSessionId2}, sip2={sip2}, dip2={dip2}")
