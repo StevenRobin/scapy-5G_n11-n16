@@ -18,11 +18,17 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from functools import partial
 import multiprocessing as mp
 
-def inc_ip(ip, step=1):
-    """IPv4字符串加法，末位依次递增。"""
-    parts = list(map(int, ip.split('.')))
-    val = (parts[0]<<24) + (parts[1]<<16) + (parts[2]<<8) + parts[3] + step
-    return f"{(val>>24)&0xFF}.{(val>>16)&0xFF}.{(val>>8)&0xFF}.{val&0xFF}"
+class OptimizedIPIncrementer:
+    """优化的IP地址递增器，使用整数运算避免字符串操作"""
+    
+    def __init__(self, base_ip):
+        parts = list(map(int, base_ip.split('.')))
+        self.base_int = (parts[0] << 24) + (parts[1] << 16) + (parts[2] << 8) + parts[3]
+        
+    def get_ip(self, offset):
+        """快速获取偏移后的IP地址"""
+        ip_int = self.base_int + offset
+        return f"{(ip_int >> 24) & 0xFF}.{(ip_int >> 16) & 0xFF}.{(ip_int >> 8) & 0xFF}.{ip_int & 0xFF}"
 
 def parse_http2_frame(data, offset=0):
     """严格按照HTTP/2规范解析帧"""
