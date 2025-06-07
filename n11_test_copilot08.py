@@ -37,10 +37,16 @@ dnn1 = "dnn600000001"
 tac1 = "100001"
 cgi1 = "010000001"
 
-UpfIP1 = "80.0.0.1"
-UpTeid1 = 0x70000001
-UpfIP2 = "70.0.0.1"
-UpTeid2 = 0x30000001
+# 新变量配置 - 与新变量批量修改器保持一致
+# 第47个报文的gTPTunnel字段
+upfIP1 = "80.0.0.1"     # 原始值: 123.1.1.20
+upTEID1 = 0x70000001    # 原始值: 0x001e8480
+
+# 第49个报文的gTPTunnel字段  
+gnbIP1 = "70.0.0.1"     # 原始值: 124.1.1.3
+dnTEID1 = 0x30000001    # 原始值: 0x00000001
+
+# 兼容性变量已移除，现在直接使用新变量名
 
 CLIENT_IP_OLD = "121.1.1.10"
 SERVER_IP_OLD = "123.1.1.10"
@@ -79,7 +85,7 @@ TARGET_FIELDS = {
 }
 
 PCAP_IN = "pcap/N11_create_50p_portX.pcap"
-PCAP_OUT = "pcap/N11_create_1001.pcap"
+PCAP_OUT = "pcap/N11_create_2001.pcap"
 
 MODIFY_PATH_PREFIX = "/nsmf-pdusession/v1/sm-contexts/"
 MODIFY_PATH_SUFFIX = "-5/modify"
@@ -459,6 +465,11 @@ def process_http2_data_frame_precise(pkt_idx, frame_data, fields):
 def rebuild_mime_structure(frame_data, fields, pkt_idx):
     """重建完整的MIME结构，确保Wireshark能正确解析"""
     
+    # 特殊处理：如果是报文47，先在完整MIME数据中修改gTPTunnel
+    if pkt_idx == 46:  # 第47号报文
+        print(f"[特殊处理] 为报文47在完整MIME数据中处理gTPTunnel修改...")
+        frame_data = modify_packet47_gtp_in_full_mime(frame_data)
+    
     # 解析原始MIME结构
     parts = frame_data.split(b'--++Boundary')
     mime_parts = []
@@ -481,8 +492,7 @@ def rebuild_mime_structure(frame_data, fields, pkt_idx):
                     # 添加Content-Id头
                     content_id = "PduSessEstReq" if pkt_idx == 11 else f"Part{i}"
                     headers_section += f"\r\nContent-Id:{content_id}".encode()
-                
-                # 修改JSON内容
+                  # 修改JSON内容
                 modified_json = modify_json_data(body_section, fields)
                 if modified_json:
                     body_section = modified_json
@@ -491,7 +501,13 @@ def rebuild_mime_structure(frame_data, fields, pkt_idx):
                 # 非JSON部分，确保有Content-Id
                 if b'Content-Id:' not in headers_section:
                     content_id = f"Part{i}"
-                    headers_section += f"\r\nContent-Id:{content_id}".encode()
+                    headers_section += f"\r\nContent-Id:{content_id}".encode()                # 处理二进制部分的MIME结构（针对第47、49报文的第2个部分）
+                if (pkt_idx == 46 or pkt_idx == 48) and i == 2:  # 第2个部分（通常是二进制部分）
+                    print(f"[处理] 修改报文{pkt_idx+1}第{i}个MIME部分的二进制内容")
+                    print(f"[DEBUG] 调用modify_binary_elements之前，body_section长度: {len(body_section)}")
+                    # 传递完整的frame_data作为full_mime_data参数
+                    body_section = modify_binary_elements(body_section, pkt_idx, frame_data)
+                    print(f"[DEBUG] 调用modify_binary_elements之后，body_section长度: {len(body_section)}")
             
             # 重建这个MIME部分
             rebuilt_part = headers_section + b'\r\n\r\n' + body_section
@@ -612,12 +628,543 @@ def validate_http2_frame_structure(raw_data, pkt_idx):
     
     return True
 
+def modify_packet47_gtp_in_full_mime(frame_data):
+    """
+    专门处理第47个报文的gTPTunnel修改
+    在完整的MIME数据中查找并修改gTPTunnel字段
+    """
+    global upfIP1, upTEID1
+    
+    print("[GTP47] 开始在完整MIME数据中处理第47个报文的gTPTunnel字段...")
+    
+    # 目标IP和TEID
+    original_ip = bytes([123, 1, 1, 20])  # 123.1.1.20
+    original_teid = bytes([0x00, 0x1e, 0x84, 0x80])  # 0x1e8480
+    
+    modified_data = bytearray(frame_data)
+    modifications_count = 0
+    
+    # 在完整数据中查找gTPTunnel
+    ip_pos = modified_data.find(original_ip)
+    if ip_pos >= 0:
+        print(f"[GTP47] 找到原始IP 123.1.1.20 在位置 {ip_pos}")
+        
+        # 检查TEID
+        teid_pos = ip_pos + 4
+        if teid_pos + 4 <= len(modified_data):
+            found_teid = bytes(modified_data[teid_pos:teid_pos+4])
+            if found_teid == original_teid:
+                print(f"[GTP47] 验证TEID匹配: {found_teid.hex()}")
+                
+                # 修改IP地址
+                new_ip_parts = [int(x) for x in upfIP1.split('.')]
+                modified_data[ip_pos:ip_pos+4] = new_ip_parts
+                print(f"[SUCCESS] gTPTunnel IP: 123.1.1.20 -> {upfIP1}")
+                upfIP1 = inc_ip(upfIP1)
+                modifications_count += 1
+                
+                # 修改TEID
+                new_teid_bytes = upTEID1.to_bytes(4, 'big')
+                modified_data[teid_pos:teid_pos+4] = new_teid_bytes
+                print(f"[SUCCESS] gTPTunnel TEID: 0x{original_teid.hex()} -> {hex(upTEID1)}")
+                upTEID1 = inc_hex(upTEID1)
+                modifications_count += 1
+                
+                print(f"[GTP47] 成功修改了 {modifications_count} 个gTPTunnel字段")
+                return bytes(modified_data)
+            else:
+                print(f"[GTP47] TEID不匹配: 期望{original_teid.hex()}, 实际{found_teid.hex()}")
+        else:
+            print("[GTP47] 数据长度不足，无法检查TEID")
+    else:
+        print("[GTP47] 在完整MIME数据中也未找到原始IP 123.1.1.20")
+    
+    return frame_data
+
+def modify_binary_elements(frame_data, pkt_idx, full_mime_data=None):
+    """
+    修改二进制形式的MIME结构中的特定字段 - 基于实际gTPTunnel字段位置
+    
+    根据调试结果，实际的gTPTunnel字段位置：
+    - 第47个报文: IP=123.1.1.20 位置19, TEID=0x1e8480, 目标: upfIP1=80.0.0.1, upTEID1=0x70000001
+    - 第49个报文: IP=124.1.1.3 位置3, TEID=0x1, 目标: gnbIP1=70.0.0.1, dnTEID1=0x30000001
+    
+    参数:
+    - frame_data: 小的数据段（MIME body section）
+    - pkt_idx: 报文索引
+    - full_mime_data: 完整的MIME数据（用于搜索gTPTunnel）
+    """
+    global PduAddr1, dnn1, upfIP1, upTEID1, gnbIP1, dnTEID1
+    
+    print(f"\n[MODIFY] ===== 开始处理报文{pkt_idx+1} =====")
+    print(f"[DEBUG] 原始数据长度: {len(frame_data)}")
+    if full_mime_data:
+        print(f"[DEBUG] 完整MIME数据长度: {len(full_mime_data)}")
+    
+    # 打印数据的十六进制概览  
+    hex_preview = frame_data[:min(128, len(frame_data))].hex()
+    print(f"[DEBUG] 前{min(128, len(frame_data))}字节十六进制: {hex_preview}")
+    
+    modified_data = bytearray(frame_data)  # 使用bytearray便于修改
+    modifications_count = 0
+    
+    # 报文47: 修改PDU address、DNN、gTPTunnel
+    if pkt_idx == 46:
+        print("[TASK] 处理第47号报文 - PDU address + DNN + gTPTunnel")
+        
+        # 1. 查找并修改PDU address (element ID=0x29)
+        print("\n[1] 查找PDU address字段 (element ID=0x29)...")
+        
+        # 改进的PDU address查找策略
+        pdu_patterns = [
+            b'\x29\x05\x01',      # 标准: ID=0x29, len=5, type=IPv4
+            b'\x29\x04',          # 简化: ID=0x29, len=4
+            b'\x29',              # 最基本: 只查找ID
+        ]
+        
+        pdu_addr_found = False
+        for i, pattern in enumerate(pdu_patterns):
+            pdu_pos = modified_data.find(pattern)
+            if pdu_pos >= 0:
+                print(f"[INFO] 找到PDU address模式{i+1} {pattern.hex()} 在位置 {pdu_pos}")
+                
+                # 根据不同模式确定IP地址位置
+                if i == 0:  # 完整模式
+                    ip_pos = pdu_pos + 3
+                elif i == 1:  # 简化模式
+                    ip_pos = pdu_pos + 2
+                else:  # 基本模式，需要跳过长度字节
+                    if pdu_pos + 1 < len(modified_data):
+                        length = modified_data[pdu_pos + 1]
+                        if length >= 4:
+                            ip_pos = pdu_pos + 2 + (length - 4)  # 假设IP在字段末尾
+                        else:
+                            continue
+                    else:
+                        continue
+                
+                # 修改IP地址
+                if ip_pos + 4 <= len(modified_data):
+                    old_ip_bytes = modified_data[ip_pos:ip_pos+4]
+                    old_ip = '.'.join(str(b) for b in old_ip_bytes)
+                    new_ip_parts = [int(x) for x in PduAddr1.split('.')]
+                    
+                    # 验证新IP地址的合理性
+                    if all(0 <= part <= 255 for part in new_ip_parts):
+                        modified_data[ip_pos:ip_pos+4] = new_ip_parts
+                        print(f"[SUCCESS] PDU address: {old_ip} -> {PduAddr1}")
+                        PduAddr1 = inc_ip(PduAddr1)
+                        modifications_count += 1
+                        pdu_addr_found = True
+                        break
+                    else:
+                        print(f"[ERROR] 无效的IP地址: {PduAddr1}")
+                else:
+                    print(f"[WARN] IP地址位置超出数据范围: {ip_pos}")
+        
+        if not pdu_addr_found:
+            print("[WARN] 未找到PDU address字段")
+        
+        # 2. 查找并修改DNN (element ID=0x25)
+        print("\n[2] 查找DNN字段 (element ID=0x25)...")
+        
+        dnn_pos = modified_data.find(b'\x25')
+        if dnn_pos >= 0 and dnn_pos + 1 < len(modified_data):
+            old_length = modified_data[dnn_pos + 1]
+            print(f"[INFO] 找到DNN字段在位置 {dnn_pos}, 原长度: {old_length}")
+            
+            # 计算原DNN字段的结束位置
+            dnn_data_start = dnn_pos + 2
+            dnn_data_end = dnn_data_start + old_length
+            
+            if dnn_data_end <= len(modified_data):
+                # 读取原DNN数据用于调试
+                old_dnn_data = bytes(modified_data[dnn_data_start:dnn_data_end])
+                print(f"[DEBUG] 原DNN数据: {old_dnn_data}")
+                
+                # 准备新的DNN数据
+                new_dnn_bytes = dnn1.encode('utf-8')
+                new_length = 13  # 固定长度13
+                
+                # 构建新的DNN字段: length + actual_length + data
+                if len(new_dnn_bytes) <= new_length - 1:  # 预留1字节给实际长度
+                    new_dnn_field = bytes([new_length, len(new_dnn_bytes)]) + new_dnn_bytes
+                    
+                    # 替换DNN字段 (保留element ID)
+                    new_data = (modified_data[:dnn_pos+1] + 
+                               new_dnn_field + 
+                               modified_data[dnn_data_end:])
+                    modified_data = bytearray(new_data)
+                    
+                    print(f"[SUCCESS] DNN修改: {old_dnn_data} -> {dnn1} (新长度: {new_length})")
+                      # 递增DNN
+                    try:
+                        numeric_part = int(''.join(filter(str.isdigit, dnn1)))
+                        prefix = ''.join(filter(str.isalpha, dnn1))
+                        dnn1 = f"{prefix}{numeric_part + 1:09d}"  # 保持9位数字
+                    except:
+                        print("[WARN] DNN递增失败，保持原值")
+                    modifications_count += 1
+                else:
+                    print(f"[ERROR] DNN数据太长: {len(new_dnn_bytes)} > {new_length-1}")
+            else:
+                print("[WARN] DNN字段长度超出数据范围")
+        else:
+            print("[WARN] 未找到DNN字段")        # 3. 查找并修改gTPTunnel字段（基于实际字段位置）
+        print("\n[3] 查找gTPTunnel字段（直接搜索原始IP和TEID）...")
+        
+        # 第47号报文的gTPTunnel在rebuild_mime_structure中已经处理过了
+        print("[INFO] 报文47的gTPTunnel修改已在完整MIME层面处理，跳过此步骤")# 报文49: 修改gTPTunnel字段
+    elif pkt_idx == 48:
+        print("[TASK] 处理第49号报文 - gTPTunnel")
+        
+        # 查找并修改gTPTunnel字段（基于实际字段位置）
+        print("\n[gTPTunnel] 查找第49号报文gTPTunnel字段（直接搜索原始IP和TEID）...")
+        
+        # 第49号报文查找原始IP: 124.1.1.3 和 TEID: 0x1
+        original_ip = bytes([124, 1, 1, 3])  # 124.1.1.3
+        original_teid = bytes([0x00, 0x00, 0x00, 0x01])  # 0x1
+        
+        ip_pos = modified_data.find(original_ip)
+        if ip_pos >= 0:
+            print(f"[+] 找到原始IP 124.1.1.3 在位置 {ip_pos}")
+            
+            # 检查后面4字节是否是原始TEID
+            teid_pos = ip_pos + 4
+            if teid_pos + 4 <= len(modified_data):
+                found_teid = bytes(modified_data[teid_pos:teid_pos+4])
+                if found_teid == original_teid:
+                    print(f"[+] 验证TEID匹配: {found_teid.hex()} == {original_teid.hex()}")
+                    
+                    # 修改IP地址
+                    new_ip_parts = [int(x) for x in gnbIP1.split('.')]
+                    modified_data[ip_pos:ip_pos+4] = new_ip_parts
+                    print(f"[SUCCESS] gTPTunnel IP: 124.1.1.3 -> {gnbIP1}")
+                    gnbIP1 = inc_ip(gnbIP1)
+                    modifications_count += 1
+                    
+                    # 修改TEID
+                    new_teid_bytes = dnTEID1.to_bytes(4, 'big')
+                    modified_data[teid_pos:teid_pos+4] = new_teid_bytes
+                    print(f"[SUCCESS] gTPTunnel TEID: 0x{original_teid.hex()} -> {hex(dnTEID1)}")
+                    dnTEID1 = inc_hex(dnTEID1)
+                    modifications_count += 1
+                else:
+                    print(f"[WARN] TEID不匹配: 期望{original_teid.hex()}, 实际{found_teid.hex()}")
+            else:
+                print("[WARN] 数据长度不足，无法检查TEID")
+        else:
+            print("[WARN] 报文49中未找到原始IP 124.1.1.3")
+    
+    # 结果总结
+    print(f"\n[RESULT] 报文{pkt_idx+1}处理完成:")
+    print(f"  - 成功修改: {modifications_count} 个字段")
+    print(f"  - 数据长度变化: {len(frame_data)} -> {len(modified_data)}")
+    
+    return bytes(modified_data)
+
+
+def find_gtp_tunnel_by_protocol_ie(data, pkt_num):
+    """
+    基于ProtocolIE-Field ID查找gTPTunnel的TransportLayerAddress和gTP-TEID
+    
+    参数:
+    - data: 二进制数据
+    - pkt_num: 报文号码(47或49)
+    
+    返回:
+    - (ip_pos, teid_pos): IP地址和TEID的位置，如果未找到返回(-1, -1)
+    """
+    print(f"\n[GTP-IE] 基于ProtocolIE-Field查找报文{pkt_num}的gTPTunnel字段...")
+    
+    if pkt_num == 47:
+        # 第47个报文：查找id-UL-NGU-UP-TNLInformation (139)
+        # ASN.1编码：139 = 0x8B，通常编码为 0x00 0x8B 或在上下文中可能是其他形式
+        print("[GTP-IE] 查找id-UL-NGU-UP-TNLInformation (139)...")
+        
+        # 不同的编码可能性
+        ie_patterns = [
+            b'\x00\x8b',          # 直接的139编码 
+            b'\x8b',              # 简化编码
+            b'\x00\x00\x8b',      # 扩展编码
+            b'\x01\x39',          # 另一种可能的编码(1*256+57=313, 但139的BCD可能)
+            b'\x89\x03',          # 可能的变体编码
+        ]
+        
+        # 同时查找UL-NGU相关的字符串模式
+        string_patterns = [
+            b'UL-NGU',
+            b'TNLInformation', 
+            b'TransportLayer',
+        ]
+        
+    elif pkt_num == 49:
+        # 第49个报文：查找dLQosFlowPerTNLInformation
+        print("[GTP-IE] 查找dLQosFlowPerTNLInformation...")
+        
+        ie_patterns = [
+            b'dLQosFlow',
+            b'QosFlow', 
+            b'TNLInfo',
+            b'PerTNL',
+        ]
+        
+        # 数字模式（如果有特定的IE ID）
+        string_patterns = [
+            b'\x00\x7a',          # 可能的ID值
+            b'\x7a',              # 简化
+            b'DL',                # 下行相关
+        ]
+    
+    else:
+        print(f"[GTP-IE] 不支持的报文号: {pkt_num}")
+        return (-1, -1)
+    
+    # 策略1: 查找ProtocolIE-Field模式
+    ie_found_pos = -1
+    found_pattern = None
+    
+    for pattern in ie_patterns:
+        pos = data.find(pattern)
+        if pos >= 0:
+            print(f"[GTP-IE] 找到IE模式 '{pattern}' 在位置 {pos}")
+            ie_found_pos = pos
+            found_pattern = pattern
+            break
+    
+    # 策略2: 如果策略1失败，查找字符串模式
+    if ie_found_pos == -1:
+        for pattern in string_patterns:
+            pos = data.find(pattern)
+            if pos >= 0:
+                print(f"[GTP-IE] 找到字符串模式 '{pattern}' 在位置 {pos}")
+                ie_found_pos = pos  
+                found_pattern = pattern
+                break
+    
+    if ie_found_pos == -1:
+        print(f"[GTP-IE] 未找到报文{pkt_num}的ProtocolIE-Field标识")
+        return (-1, -1)
+    
+    # 在找到的IE位置附近搜索TransportLayerAddress和gTP-TEID
+    print(f"[GTP-IE] 在IE位置 {ie_found_pos} 附近搜索TransportLayerAddress...")
+    
+    # 搜索范围：IE位置前后50字节
+    search_start = max(0, ie_found_pos - 50)
+    search_end = min(len(data) - 8, ie_found_pos + 100)
+    
+    # 查找TransportLayerAddress（通常是IP地址，4字节）
+    target_first_byte = 80 if pkt_num == 47 else 70
+    ip_pos = -1
+    teid_pos = -1
+    
+    print(f"[GTP-IE] 在范围 {search_start}-{search_end} 内查找 {target_first_byte}.x.x.x 格式的IP地址...")
+    
+    for pos in range(search_start, search_end):
+        if pos + 8 <= len(data):  # 需要至少8字节（IP+TEID）
+            # 检查是否是目标IP地址
+            if data[pos] == target_first_byte:
+                # 验证后续3字节是否构成合理的IP地址
+                ip_candidate = data[pos:pos+4]
+                if all(0 <= byte <= 255 for byte in ip_candidate):
+                    ip_str = '.'.join(str(b) for b in ip_candidate)
+                    print(f"[GTP-IE] 找到候选IP地址: {ip_str} 在位置 {pos}")
+                    
+                    # 检查前后的上下文，确认这是TransportLayerAddress
+                    context_before = data[max(0, pos-8):pos].hex()
+                    context_after = data[pos+4:pos+12].hex() 
+                    print(f"[GTP-IE] IP前8字节: {context_before}")
+                    print(f"[GTP-IE] IP后8字节: {context_after}")
+                    
+                    # 简单的启发式验证：
+                    # 1. 前面可能有长度标识
+                    # 2. 后面4字节可能是TEID
+                    validation_score = 0
+                    
+                    # 检查前面是否有长度标识（0x04表示4字节IP）
+                    if pos > 0 and data[pos-1] == 0x04:
+                        validation_score += 2
+                        print(f"[GTP-IE] 发现长度标识 0x04")
+                    
+                    # 检查前面是否有TransportLayerAddress的标识
+                    if pos > 1 and data[pos-2] in [0x00, 0x01, 0x40, 0x80]:
+                        validation_score += 1
+                        print(f"[GTP-IE] 发现可能的地址类型标识: {hex(data[pos-2])}")
+                      # 检查后面4字节是否是合理的TEID值
+                    teid_candidate = data[pos+4:pos+8]
+                    teid_value = int.from_bytes(teid_candidate, 'big')
+                    if 0x10000000 <= teid_value <= 0xFFFFFFFF:  # 合理的TEID范围
+                        validation_score += 2
+                        print(f"[GTP-IE] 发现合理的TEID: {hex(teid_value)}")
+                    
+                    print(f"[GTP-IE] 验证分数: {validation_score}/5")
+                    
+                    # 如果验证分数足够高，认为找到了正确的位置
+                    if validation_score >= 2:
+                        ip_pos = pos
+                        teid_pos = pos + 4
+                        print(f"[GTP-IE] ✅ 确认找到TransportLayerAddress和gTP-TEID")
+                        print(f"[GTP-IE]    IP位置: {ip_pos}, TEID位置: {teid_pos}")
+                        break
+    
+    if ip_pos == -1:
+        print(f"[GTP-IE] ❌ 未找到有效的TransportLayerAddress")
+        return (-1, -1)
+    
+    return (ip_pos, teid_pos)
+
+
+def modify_gtp_tunnel_fields(data, pkt_num, ip_value, teid_value, ip_var_name):
+    """
+    修改gTPTunnel字段的IP和TEID
+    返回修改的字段数量
+    """
+    global upfIP1, upTEID1, gnbIP1, dnTEID1
+    
+    modifications = 0
+    
+    print(f"[GTP] 开始查找报文{pkt_num}的gTPTunnel字段...")
+    print(f"[GTP] 数据长度: {len(data)}")
+    print(f"[GTP] 完整数据十六进制: {data.hex()}")
+    
+    # 策略1: 直接搜索可能的IP地址
+    target_first_byte = 80 if pkt_num == 47 else 70
+    print(f"[GTP] 查找以{target_first_byte}开头的IP地址...")
+    
+    # 在整个数据中搜索目标IP地址模式
+    for i in range(len(data) - 7):  # 至少需要8字节（IP+TEID）
+        if data[i] == target_first_byte:
+            # 检查是否是合理的IP地址
+            ip_candidate = data[i:i+4]
+            ip_str = '.'.join(str(b) for b in ip_candidate)
+            
+            # 验证IP地址的合理性
+            if all(0 <= byte <= 255 for byte in ip_candidate):
+                print(f"[GTP] 在位置{i}找到候选IP: {ip_str}")
+                
+                # 检查是否在合理的上下文中（前后几个字节的模式）
+                context_start = max(0, i - 8)
+                context_end = min(len(data), i + 12)
+                context = data[context_start:context_end]
+                print(f"[GTP] 上下文({context_start}-{context_end}): {context.hex()}")
+                  # 修改IP地址
+                new_ip_parts = [int(x) for x in ip_value.split('.')]
+                data[i:i+4] = new_ip_parts
+                print(f"[SUCCESS] gTPTunnel IP修改: {ip_str} -> {ip_value}")
+                # 修改对应的全局变量
+                if pkt_num == 47:
+                    upfIP1 = inc_ip(upfIP1)
+                else:
+                    gnbIP1 = inc_ip(gnbIP1)
+                
+                modifications += 1
+                
+                # 检查并修改TEID（紧接着IP地址的4字节）
+                teid_pos = i + 4
+                if teid_pos + 4 <= len(data):
+                    old_teid_bytes = data[teid_pos:teid_pos+4]
+                    old_teid = int.from_bytes(old_teid_bytes, 'big')
+                    new_teid_bytes = teid_value.to_bytes(4, 'big')
+                    data[teid_pos:teid_pos+4] = new_teid_bytes
+                    print(f"[SUCCESS] gTPTunnel TEID修改: {hex(old_teid)} -> {hex(teid_value)}")
+                    # 修改对应的全局变量
+                    if pkt_num == 47:
+                        upTEID1 = inc_hex(upTEID1)
+                    else:
+                        dnTEID1 = inc_hex(dnTEID1)
+                    
+                    modifications += 1
+                
+                # 只修改第一个找到的IP地址
+                break
+    
+    # 策略2: 如果策略1没有找到，尝试查找ASN.1结构标记
+    if modifications == 0:
+        print("[GTP] 策略1未找到，尝试ASN.1结构搜索...")
+        
+        # 常见的ASN.1/3GPP结构标记
+        asn1_patterns = [
+            b'\x00\x06',         # 长度标记
+            b'\x40\x06',         # gTPTunnel标记
+            b'\x00\x00\x06',     # 扩展标记
+            b'\x00\x03',         # 短标记
+            b'\x06\x00',         # 反序标记
+        ]
+        
+        for pattern in asn1_patterns:
+            pos = data.find(pattern)
+            if pos >= 0:
+                print(f"[GTP] 找到ASN.1模式 {pattern.hex()} 在位置 {pos}")
+                
+                # 在模式附近搜索目标IP
+                search_start = max(0, pos - 10)
+                search_end = min(len(data) - 4, pos + 20)
+                
+                for search_pos in range(search_start, search_end):
+                    if search_pos + 8 <= len(data):
+                        if data[search_pos] == target_first_byte:
+                            ip_candidate = data[search_pos:search_pos+4]
+                            ip_str = '.'.join(str(b) for b in ip_candidate)
+                            
+                            print(f"[GTP] ASN.1搜索找到IP: {ip_str} 在位置 {search_pos}")
+                              # 修改IP和TEID
+                            new_ip_parts = [int(x) for x in ip_value.split('.')]
+                            data[search_pos:search_pos+4] = new_ip_parts
+                            print(f"[SUCCESS] ASN.1模式gTPTunnel IP修改: {ip_str} -> {ip_value}")
+                            if pkt_num == 47:
+                                upfIP1 = inc_ip(upfIP1)
+                            else:
+                                gnbIP1 = inc_ip(gnbIP1)
+                            
+                            modifications += 1
+                            
+                            # 修改TEID
+                            teid_pos = search_pos + 4
+                            if teid_pos + 4 <= len(data):
+                                old_teid_bytes = data[teid_pos:teid_pos+4]
+                                old_teid = int.from_bytes(old_teid_bytes, 'big')
+                                new_teid_bytes = teid_value.to_bytes(4, 'big')
+                                data[teid_pos:teid_pos+4] = new_teid_bytes
+                                print(f"[SUCCESS] ASN.1模式gTPTunnel TEID修改: {hex(old_teid)} -> {hex(teid_value)}")
+                                if pkt_num == 47:
+                                    upTEID1 = inc_hex(upTEID1)
+                                else:
+                                    dnTEID1 = inc_hex(dnTEID1)
+                                
+                                modifications += 1
+                              # 找到一个就够了
+                            break
+                
+                if modifications > 0:
+                    break
+    
+    if modifications == 0:
+        print(f"[WARN] 报文{pkt_num}中未找到gTPTunnel字段（已尝试所有策略）")
+    else:
+        print(f"[INFO] 报文{pkt_num}的gTPTunnel字段修改完成，共修改{modifications}个字段")
+    
+    return modifications
+
 # 主程序入口
 if __name__ == "__main__":
     print("=== 程序启动 ===")
+    print(f"初始变量值:")
+    print(f"  PduAddr1: {PduAddr1}")
+    print(f"  dnn1: {dnn1}")
+    print(f"  upfIP1 (新变量名): {upfIP1}")
+    print(f"  upTEID1 (新变量名): {hex(upTEID1)}")
+    print(f"  gnbIP1 (新变量名): {gnbIP1}")
+    print(f"  dnTEID1 (新变量名): {hex(dnTEID1)}")
     try:
         main_batch()
         print("=== 程序正常结束 ===")
+        print(f"最终变量值:")
+        print(f"  PduAddr1: {PduAddr1}")
+        print(f"  dnn1: {dnn1}")
+        print(f"  upfIP1 (新变量名): {upfIP1}")
+        print(f"  upTEID1 (新变量名): {hex(upTEID1)}")
+        print(f"  gnbIP1 (新变量名): {gnbIP1}")
+        print(f"  dnTEID1 (新变量名): {hex(dnTEID1)}")
     except Exception as e:
         print(f"=== 程序异常结束: {e} ===")
         import traceback
