@@ -53,12 +53,14 @@ sport3 = 10003  # 替换原始端口51239
 sport4 = 10004  # 替换原始端口55983
 
 # 源端口映射表 - 原始端口到新端口的映射
-PORT_MAPPING = {
-    20000: sport1,   # 20000 -> 10001
-    30000: sport2,   # 30000 -> 10002
-    51239: sport3,   # 51239 -> 10003
-    55983: sport4    # 55983 -> 10004
-}
+def get_port_mapping():
+    """动态获取当前端口映射，避免全局变量冲突"""
+    return {
+        20000: sport1,   # 20000 -> 10001
+        30000: sport2,   # 30000 -> 10002
+        51239: sport3,   # 51239 -> 10003
+        55983: sport4    # 55983 -> 10004
+    }
 
 # 兼容性变量已移除，现在直接使用新变量名
 
@@ -92,14 +94,15 @@ pei1 = imei14_to_imeisv(imei14)
 TARGET_FIELDS = {
     "supi": f"imsi-{imsi1}",
     "pei": f"imeisv-{pei1}",
-    "gpsi": f"msisdn-{gpsi1}",    "dnn": dnn1,
+    "gpsi": f"msisdn-{gpsi1}",    
+    "dnn": dnn1,
     "tac": tac1,
     "nrCellId": cgi1,
     "smContextStatusUri": f"http://{sip1}/ntf-service/v1/nsmf-notify/0/pdusession-smcontextsts"
 }
 
 PCAP_IN = "pcap/N11_create_50p_portX.pcap"
-PCAP_OUT = "pcap/N11_create_2001.pcap"
+PCAP_OUT = "pcap/N11_create_2011.pcap"
 
 MODIFY_PATH_PREFIX = "/nsmf-pdusession/v1/sm-contexts/"
 MODIFY_PATH_SUFFIX = "-5/modify"
@@ -133,15 +136,7 @@ def update_port_variables(step: int = 1):
     sport2 = inc_port(sport2, step)
     sport3 = inc_port(sport3, step)
     sport4 = inc_port(sport4, step)
-    
-    # 同时更新端口映射表
-    global PORT_MAPPING
-    PORT_MAPPING = {
-        20000: sport1,
-        30000: sport2,
-        51239: sport3,
-        55983: sport4
-    }
+    # 移除重复的PORT_MAPPING更新，改用动态函数
 
 class HTTP2FrameHeader(Packet):
     name = "HTTP2FrameHeader"
@@ -398,19 +393,21 @@ def update_ip(pkt):
         elif pkt[IP].dst == SERVER_IP_OLD:
             pkt[IP].dst = dip1
     
-    # 添加TCP端口替换功能
+    # 使用动态端口映射
     if pkt.haslayer(TCP):
+        port_mapping = get_port_mapping()  # 获取当前映射
+        
         # 替换源端口
-        if pkt[TCP].sport in PORT_MAPPING:
+        if pkt[TCP].sport in port_mapping:
             original_sport = pkt[TCP].sport
-            new_sport = PORT_MAPPING[original_sport]
+            new_sport = port_mapping[original_sport]
             pkt[TCP].sport = new_sport
             print(f"[PORT] 源端口替换: {original_sport} -> {new_sport}")
         
-        # 替换目的端口（如果数据包的目的端口是原始端口之一）
-        if pkt[TCP].dport in PORT_MAPPING:
+        # 替换目的端口
+        if pkt[TCP].dport in port_mapping:
             original_dport = pkt[TCP].dport
-            new_dport = PORT_MAPPING[original_dport]
+            new_dport = port_mapping[original_dport]
             pkt[TCP].dport = new_dport
             print(f"[PORT] 目的端口替换: {original_dport} -> {new_dport}")
 
