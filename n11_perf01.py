@@ -909,6 +909,25 @@ def async_write_pcap(filename, packets):
     except Exception as e:
         print(f"❌ 写入失败: {filename}, 错误: {e}")
 
+def async_write_pcap_fixed(filename, packets):
+    fixed_packets = []
+    packets_copy = None
+    try:
+        packets_copy = list(packets)  # 浅拷贝
+        # 分批处理，错误隔离
+        for pkt_bytes in packets_copy:
+            if isinstance(pkt_bytes, bytes) and len(pkt_bytes) > 0:
+                pkt = Ether(pkt_bytes)
+                fixed_packets.append(pkt)
+        wrpcap(filename, fixed_packets)
+    finally:
+        # 确保清理
+        if fixed_packets:
+            del fixed_packets
+        if packets_copy:
+            del packets_copy
+        gc.collect()
+
 def main_batch_n16_style(
     pcap_in,
     pcap_out,
