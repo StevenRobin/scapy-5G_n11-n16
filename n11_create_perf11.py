@@ -761,16 +761,6 @@ def main_batch(
         import traceback
         traceback.print_exc()
 
-def debug_packet_frames(pkt_idx, pkt_info):
-    """调试函数：打印包中的HTTP/2帧信息"""
-    if pkt_idx in (11, 46, 48):  # 关键报文调试
-        print(f"[调试] 第{pkt_idx+1}号报文包含{len(pkt_info)}个HTTP/2帧:")
-        for i, entry in enumerate(pkt_info):
-            if entry['type'] == 'headers':
-                print(f"  帧{i}: HEADERS帧 (长度: {len(entry['data'])}字节)")
-            elif entry['type'] == 'data':
-                print(f"  帧{i}: DATA帧 (长度: {len(entry['data'])}字节)")
-
 def validate_http2_frame_structure(raw_data, pkt_idx):
     """验证HTTP/2帧结构的有效性"""
     frames = extract_http2_frames(raw_data)

@@ -70,6 +70,7 @@ sport3 = INITIAL_SPORT3
 # IP和端口数量配置
 IP_NUM = 2000      # 统一的IP循环数量
 SPORT_NUM = 20000  # sport端口数量
+TAC_NUM = 10000000 # TAC循环数量
 
 def get_port_mapping():
     """动态获取当前端口映射，避免全局变量冲突"""
@@ -94,13 +95,12 @@ def update_batch_variables(iteration):
     auth2 = sip1
     upfIP1 = inc_ip(INITIAL_UPFIP1, ip_iteration)
     gnbIP1 = inc_ip(INITIAL_GNBIP1, ip_iteration)
-    
-    # 数值字段+1递增
+      # 数值字段+1递增
     imsi1 = inc_int(INITIAL_IMSI1, iteration)
     imei14 = inc_int(INITIAL_IMEI14, iteration)
     gpsi1 = inc_int(INITIAL_GPSI1, iteration)
     PduAddr1 = inc_ip(INITIAL_PDUADDR1, iteration)
-    tac1 = inc_int(INITIAL_TAC1, iteration)
+    tac1 = inc_int(INITIAL_TAC1, iteration % TAC_NUM)  # 使用TAC_NUM进行循环
     cgi1 = inc_int(INITIAL_CGI1, iteration)
     upTEID1 = inc_hex(INITIAL_UPTEID1, iteration)
     dnTEID1 = inc_hex(INITIAL_DNTEID1, iteration)
@@ -620,13 +620,44 @@ def process_one_iteration(original_packets, iteration):
     
     return new_packets
 
+def async_write_pcap(filename, packets):
+    """异步写入PCAP文件 - N16风格优化版"""
+    try:
+        # 类型修正 - 确保packets是Packet对象列表
+        fixed_packets = []
+        for pkt in packets:
+            if isinstance(pkt, bytes):
+                # 如果是bytes，先转换为Ether对象
+                fixed_packets.append(Ether(pkt))
+            elif pkt.__class__.__name__ == 'Raw':
+                # 如果是Raw包，包装为Ether帧
+                fixed_packets.append(Ether()/pkt)
+            else:
+                fixed_packets.append(pkt)
+        
+        print(f"📝 开始写入 {filename}，包含 {len(fixed_packets)} 个数据包")
+        wrpcap(filename, fixed_packets)
+        print(f"✅ 成功写入 {filename}")
+        
+        # N16风格：写入后立即清理
+        del fixed_packets
+        gc.collect()
+        
+    except Exception as e:
+        print(f"❌ 写入PCAP文件失败 {filename}: {e}")
+        import traceback
+        traceback.print_exc()
+
 def write_pcap_batch(packets, filename):
-    """写入PCAP文件并回收内存"""
+    """写入PCAP文件并回收内存 - 保持向后兼容"""
     try:
         # 修复数据包链路层类型问题
         fixed_packets = []
         for pkt in packets:
-            if pkt.__class__.__name__ == 'Raw':
+            if isinstance(pkt, bytes):
+                # 如果是bytes，先转换为Ether对象
+                fixed_packets.append(Ether(pkt))
+            elif pkt.__class__.__name__ == 'Raw':
                 # 如果是Raw包，包装为Ether帧以避免写入错误
                 eth_pkt = Ether()/pkt
                 fixed_packets.append(eth_pkt)
@@ -636,10 +667,9 @@ def write_pcap_batch(packets, filename):
         wrpcap(filename, fixed_packets)
         print(f"成功写入PCAP文件: {filename}, 包含 {len(fixed_packets)} 个数据包")
         
-        # 清理内存
+        # N16风格：清理内存
         del fixed_packets
         del packets
-        import gc
         gc.collect()
         
     except Exception as e:
@@ -652,13 +682,15 @@ def main_batch_loop(
     pcap_write_interval=200000,
     max_workers=6
 ):
-    """主循环批量处理函数"""
-    print("=== N11批量循环处理开始 ===")
+    """主循环批量处理函数 - N16风格内存优化版"""
+    print("=== N11批量循环处理开始 (N16内存优化风格) ===")
     print(f"输入文件: {pcap_in}")
     print(f"输出文件前缀: {pcap_out}")
     print(f"总迭代次数: {total_iterations}")
     print(f"PCAP写入间隔: {pcap_write_interval}")
     print(f"线程数: {max_workers}")
+    
+    start_time = time.time()
     
     try:
         # 读取原始PCAP
@@ -666,32 +698,89 @@ def main_batch_loop(
         original_packets = rdpcap(pcap_in)
         print(f"成功读取 {len(original_packets)} 个数据包")
         
-        all_packets = []
-        pcap_file_count = 0
+        # 计算批次分割 - N16风格
+        BATCH_SIZE = pcap_write_interval
+        total_batches = total_iterations // BATCH_SIZE
+        remain = total_iterations % BATCH_SIZE
         
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            for i in tqdm(range(total_iterations), desc="处理进度"):
-                # 提交处理任务
-                future = executor.submit(process_one_iteration, copy.deepcopy(original_packets), i)
-                batch_packets = future.result()
-                all_packets.extend(batch_packets)
+        print(f"📊 批次信息: {total_batches} 个完整批次 + {remain} 个剩余")
+        
+        def get_outfile(base, idx):
+            """生成输出文件名"""
+            base_name, ext = os.path.splitext(base)
+            return f"{base_name}_{idx+1:03d}{ext}"
+        
+        batch_idx = 0
+        
+        # N16风格：异步写入 + 及时内存清理
+        with ThreadPoolExecutor(max_workers=4) as file_writer:
+            # 处理完整批次
+            for i in range(total_batches):
+                print(f"🚀 处理批次 {i+1}/{total_batches + (1 if remain > 0 else 0)}")
+                all_batch_packets = []
                 
-                # 检查是否需要写入PCAP
-                if (i + 1) % pcap_write_interval == 0 or (i + 1) == total_iterations:
-                    # 生成输出文件名
-                    base_name, ext = os.path.splitext(pcap_out)
-                    output_filename = f"{base_name}_{pcap_file_count + 1:03d}{ext}"
+                # 批次内循环处理
+                with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    batch_start = i * BATCH_SIZE
+                    batch_end = (i + 1) * BATCH_SIZE
                     
-                    # 写入PCAP文件
-                    write_pcap_batch(all_packets, output_filename)
+                    for j in tqdm(range(batch_start, batch_end), desc=f"Batch {i+1}", ncols=80):
+                        # 提交处理任务
+                        future = executor.submit(process_one_iteration, copy.deepcopy(original_packets), j)
+                        iteration_packets = future.result()
+                        all_batch_packets.extend(iteration_packets)
+                
+                # N16风格：批次处理完成后立即异步写入
+                out_file = get_outfile(pcap_out, batch_idx)
+                file_writer.submit(async_write_pcap, out_file, all_batch_packets)
+                
+                # N16风格：立即清理内存，避免累积
+                del all_batch_packets
+                gc.collect()
+                batch_idx += 1
+                
+                print(f"✅ 批次 {batch_idx} 处理完成，已提交异步写入")
+            
+            # 处理剩余批次
+            if remain > 0:
+                print(f"🚀 处理剩余批次 {batch_idx+1}/{total_batches + 1}")
+                all_batch_packets = []
+                
+                with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    batch_start = total_batches * BATCH_SIZE
+                    batch_end = total_iterations
                     
-                    # 重置累积包列表
-                    all_packets = []
-                    pcap_file_count += 1
-                    
-                    print(f"完成第 {pcap_file_count} 个PCAP文件，包含 {min(pcap_write_interval, total_iterations - i + pcap_write_interval - 1)} 次迭代")
+                    for j in tqdm(range(batch_start, batch_end), desc=f"Final Batch", ncols=80):
+                        future = executor.submit(process_one_iteration, copy.deepcopy(original_packets), j)
+                        iteration_packets = future.result()
+                        all_batch_packets.extend(iteration_packets)
+                
+                # 写入最后批次
+                out_file = get_outfile(pcap_out, batch_idx)
+                file_writer.submit(async_write_pcap, out_file, all_batch_packets)
+                
+                # 清理内存
+                del all_batch_packets
+                gc.collect()
+                batch_idx += 1
+                
+                print(f"✅ 最终批次处理完成，已提交异步写入")
         
-        print(f"=== 批量处理完成，共生成 {pcap_file_count} 个PCAP文件 ===")
+        # 等待文件写入完成
+        file_writer.shutdown(wait=True)
+        
+        # 清理原始数据
+        del original_packets
+        gc.collect()
+        
+        end_time = time.time()
+        duration = end_time - start_time
+        speed = total_iterations / duration if duration > 0 else 0
+        
+        print(f"\n=== 批量处理完成 ===")
+        print(f"总耗时: {duration:.2f} 秒")
+        print(f"处理速度: {speed:.2f} 组/秒")
+        print(f"共生成 {batch_idx} 个PCAP文件")
         
     except Exception as e:
         print(f"批量处理出错: {e}")
@@ -884,30 +973,6 @@ def process_one_group_n11(i, orig_packets_bytes, ip_num=2000, sport_num=20000):
         print(f"处理组 {i} 时出错: {e}")
         return []
 
-def async_write_pcap(filename, packets):
-    """异步写入PCAP文件，带内存清理"""
-    try:
-        # 将字节数据重新转换为Ether包
-        fixed_packets = []
-        for pkt_bytes in packets:
-            try:
-                pkt = Ether(pkt_bytes)
-                fixed_packets.append(pkt)
-            except:
-                # 如果转换失败，尝试作为Raw包处理
-                pkt = Ether()/Raw(pkt_bytes)
-                fixed_packets.append(pkt)
-        
-        wrpcap(filename, fixed_packets)
-        print(f"✅ 成功写入: {filename} ({len(fixed_packets)} 包)")
-        
-        # 主动清理内存
-        del fixed_packets
-        del packets
-        gc.collect()
-        
-    except Exception as e:
-        print(f"❌ 写入失败: {filename}, 错误: {e}")
 
 def async_write_pcap_fixed(filename, packets):
     fixed_packets = []
@@ -988,29 +1053,40 @@ def main_batch_n16_style(
             for i in range(total_batches):
                 print(f"🚀 处理批次 {i+1}/{total_batches + (1 if remain > 0 else 0)}")
                 all_modified_packets = []
-                
-                # 使用进程池进行CPU密集型处理
+                  # 使用进程池进行CPU密集型处理
                 with ProcessPoolExecutor(max_workers=process_workers) as executor:
                     func = partial(process_one_group_n11, 
                                  orig_packets_bytes=orig_packets_bytes,
                                  ip_num=IP_NUM, sport_num=SPORT_NUM)
                     results = executor.map(func, range(i * BATCH_SIZE, (i + 1) * BATCH_SIZE))
                     
-                    # 收集处理结果
+                    # 收集处理结果 - N16风格：逐个处理，避免大量累积
                     for group_bytes in tqdm(results, total=BATCH_SIZE, 
                                           desc=f"Batch {i+1}", ncols=80):
-                        all_modified_packets.extend(group_bytes)
+                        # 转换字节为Ether包并添加到批次
+                        for pkt_bytes in group_bytes:
+                            try:
+                                pkt = Ether(pkt_bytes)
+                                all_modified_packets.append(pkt)
+                            except:
+                                # 如果转换失败，作为Raw包处理
+                                pkt = Ether()/Raw(pkt_bytes)
+                                all_modified_packets.append(pkt)
+                        
+                        # 每收集一组就清理原始字节数据
+                        del group_bytes
                 
-                # 异步写入文件（不阻塞下一批处理）
+                # N16风格：异步写入文件（不阻塞下一批处理）
                 out_file = get_outfile(pcap_out, batch_idx)
-                file_writer.submit(async_write_pcap, out_file, all_modified_packets)
+                file_writer.submit(async_write_pcap, out_file, all_modified_packets.copy())
                 
-                # 立即清理内存
+                # N16风格：立即清理内存，避免累积
                 del all_modified_packets
                 gc.collect()
                 batch_idx += 1
-            
-            # 处理剩余组
+                
+                print(f"✅ 批次 {batch_idx} 处理完成，已提交异步写入")
+              # 处理剩余组
             if remain > 0:
                 print(f"🔄 处理剩余批次 {batch_idx+1}/{total_batches + 1}")
                 all_modified_packets = []
@@ -1021,15 +1097,31 @@ def main_batch_n16_style(
                                  ip_num=IP_NUM, sport_num=SPORT_NUM)
                     results = executor.map(func, range(total_batches * BATCH_SIZE, total_iterations))
                     
+                    # N16风格：逐个处理，及时清理
                     for group_bytes in tqdm(results, total=remain, 
-                                          desc=f"Batch {batch_idx+1}", ncols=80):
-                        all_modified_packets.extend(group_bytes)
+                                          desc=f"Final Batch", ncols=80):
+                        # 转换字节为Ether包
+                        for pkt_bytes in group_bytes:
+                            try:
+                                pkt = Ether(pkt_bytes)
+                                all_modified_packets.append(pkt)
+                            except:
+                                pkt = Ether()/Raw(pkt_bytes)
+                                all_modified_packets.append(pkt)
+                        
+                        # 清理原始字节数据
+                        del group_bytes
                 
+                # 写入最终批次
                 out_file = get_outfile(pcap_out, batch_idx)
-                file_writer.submit(async_write_pcap, out_file, all_modified_packets)
+                file_writer.submit(async_write_pcap, out_file, all_modified_packets.copy())
                 
+                # 清理内存
                 del all_modified_packets
                 gc.collect()
+                batch_idx += 1
+                
+                print(f"✅ 最终批次处理完成，已提交异步写入")
         
         # 等待所有写任务完成
         file_writer.shutdown(wait=True)
@@ -1054,6 +1146,142 @@ def main_batch_n16_style(
         import traceback
         traceback.print_exc()
 
+def main_batch_n16_style_optimized(
+    pcap_in,
+    pcap_out,
+    total_iterations=1000,
+    pcap_write_interval=200000,
+    process_workers=6,
+    thread_workers=4
+):
+    """
+    优化版N16风格混合架构处理函数
+    主要优化：避免进程池重建开销，提升第二批次及后续批次性能
+    """
+    print("=== N11 优化版混合架构处理开始 ===")
+    print(f"输入文件: {pcap_in}")
+    print(f"输出文件前缀: {pcap_out}")
+    print(f"总迭代次数: {total_iterations}")
+    print(f"PCAP写入间隔: {pcap_write_interval}")
+    print(f"进程池大小: {process_workers}")
+    print(f"线程池大小: {thread_workers}")
+    
+    start_time = time.time()
+    
+    try:
+        # 检查输入文件
+        if not os.path.exists(pcap_in):
+            print(f"❌ 输入文件不存在: {pcap_in}")
+            return
+        
+        # 1. 序列化原始PCAP到临时文件
+        print("🔄 序列化原始PCAP到临时文件...")
+        orig_packets = rdpcap(pcap_in)
+        with tempfile.NamedTemporaryFile(delete=False) as tf:
+            wrpcap(tf.name, orig_packets)
+            orig_packets_bytes = tf.name
+        
+        print(f"📦 成功读取 {len(orig_packets)} 个数据包")
+        
+        # 主动释放原始PCAP数据
+        del orig_packets
+        gc.collect()
+        
+        # 2. 计算批次分割
+        BATCH_SIZE = pcap_write_interval
+        total_batches = total_iterations // BATCH_SIZE
+        remain = total_iterations % BATCH_SIZE
+        
+        print(f"📊 批次信息: {total_batches} 个完整批次 + {remain} 个剩余")
+        
+        def get_outfile(base, idx):
+            """生成输出文件名"""
+            base_name, ext = os.path.splitext(base)
+            return f"{base_name}_{idx+1:03d}{ext}"
+        
+        # 3. 优化的混合处理架构 - 共享进程池
+        batch_idx = 0
+        
+        # ✅ 关键优化：创建一个长生命周期的进程池，避免重建开销
+        with ProcessPoolExecutor(max_workers=process_workers) as shared_executor:
+            with ThreadPoolExecutor(max_workers=thread_workers) as file_writer:
+                
+                # 预创建处理函数，避免重复创建
+                func = partial(process_one_group_n11, 
+                             orig_packets_bytes=orig_packets_bytes,
+                             ip_num=IP_NUM, sport_num=SPORT_NUM)
+                
+                # 处理完整批次
+                for i in range(total_batches):
+                    print(f"🚀 处理批次 {i+1}/{total_batches + (1 if remain > 0 else 0)}")
+                    
+                    # ✅ 使用共享进程池，避免重建
+                    batch_start_time = time.time()
+                    results = shared_executor.map(func, range(i * BATCH_SIZE, (i + 1) * BATCH_SIZE))
+                    
+                    # 收集处理结果
+                    all_modified_packets = []
+                    for group_bytes in tqdm(results, total=BATCH_SIZE, 
+                                          desc=f"Batch {i+1}", ncols=80):
+                        all_modified_packets.extend(group_bytes)
+                    
+                    batch_process_time = time.time() - batch_start_time
+                    
+                    # 异步写入文件
+                    out_file = get_outfile(pcap_out, batch_idx)
+                    file_writer.submit(async_write_pcap, out_file, all_modified_packets)
+                    
+                    # ✅ 优化内存清理：减少gc.collect()频率
+                    del all_modified_packets
+                    if i % 3 == 0:  # 每3个批次才强制回收一次
+                        gc.collect()
+                    
+                    batch_idx += 1
+                    print(f"📊 批次 {i+1} 处理耗时: {batch_process_time:.2f}秒")
+                
+                # 处理剩余组
+                if remain > 0:
+                    print(f"🔄 处理剩余批次 {batch_idx+1}/{total_batches + 1}")
+                    
+                    batch_start_time = time.time()
+                    results = shared_executor.map(func, range(total_batches * BATCH_SIZE, total_iterations))
+                    
+                    all_modified_packets = []
+                    for group_bytes in tqdm(results, total=remain, 
+                                          desc=f"Batch {batch_idx+1}", ncols=80):
+                        all_modified_packets.extend(group_bytes)
+                    
+                    batch_process_time = time.time() - batch_start_time
+                    
+                    out_file = get_outfile(pcap_out, batch_idx)
+                    file_writer.submit(async_write_pcap, out_file, all_modified_packets)
+                    
+                    del all_modified_packets
+                    print(f"📊 剩余批次处理耗时: {batch_process_time:.2f}秒")
+                
+                # 等待所有写任务完成
+                print("⏳ 等待所有文件写入完成...")
+                file_writer.shutdown(wait=True)
+        
+        # 清理临时文件
+        os.remove(orig_packets_bytes)
+        gc.collect()
+        
+        # 统计信息
+        end_time = time.time()
+        duration = end_time - start_time
+        speed = total_iterations / duration if duration > 0 else 0
+        
+        print(f"\n✅ N11优化版批量处理完成！")
+        print(f"📊 总处理: {total_iterations} 组数据包")
+        print(f"⏱️ 总耗时: {duration:.2f} 秒")
+        print(f"🚄 处理速度: {speed:.0f} 组/秒")
+        print(f"💾 输出文件: {pcap_out}")
+        
+    except Exception as e:
+        print(f"❌ 处理出错: {e}")
+        import traceback
+        traceback.print_exc()
 
 def main():
     import argparse
@@ -1068,32 +1296,42 @@ def main():
                         help='IP循环数量，默认2000（sip1/dip1/upfIP1/gnbIP1统一使用）')
     parser.add_argument('--sport-num', dest='sport_num', type=int, default=20000,
                         help='sport端口循环数量，默认20000')
-    parser.add_argument('--pcap-interval', dest='pcap_interval', type=int, default=200000,
-                        help='每多少次循环写一个PCAP文件，默认200000')
+    parser.add_argument('--tac-num', dest='tac_num', type=int, default=1000000,
+                        help='TAC循环数量，默认1000000')
+    parser.add_argument('--pcap-interval', dest='pcap_interval', type=int, default=200000,                        help='每多少次循环写一个PCAP文件，默认200000')
     parser.add_argument('--threads', dest='threads', type=int, default=6,
                         help='线程数，默认6')
     parser.add_argument('--architecture', dest='architecture', 
-                        choices=['original', 'n16'], default='n16',
-                        help='处理架构：original(原始ThreadPool) 或 n16(ProcessPool+ThreadPool混合)，默认n16')
+                        choices=['original', 'n16', 'n16-optimized'], default='n16-optimized',
+                        help='处理架构：original(原始ThreadPool) 或 n16(ProcessPool+ThreadPool混合) 或 n16-optimized(优化版，解决第二批次速度问题)，默认n16-optimized')
     parser.add_argument('--process-workers', dest='process_workers', type=int, default=6,
                         help='进程池大小，默认6（仅N16架构使用）')
     parser.add_argument('--thread-workers', dest='thread_workers', type=int, default=4,
                         help='线程池大小，默认4（仅N16架构使用）')
     
     args = parser.parse_args()
-    
-    # 更新全局配置
-    global IP_NUM, SPORT_NUM
+      # 更新全局配置
+    global IP_NUM, SPORT_NUM, TAC_NUM
     IP_NUM = args.ip_num
     SPORT_NUM = args.sport_num
+    TAC_NUM = args.tac_num
     
     # 检查输入文件
     if not os.path.exists(args.input_file):
         print(f"错误: 输入文件不存在: {args.input_file}")
         return
-    
-    # 根据选择的架构启动处理
-    if args.architecture == 'n16':
+      # 根据选择的架构启动处理
+    if args.architecture == 'n16-optimized':
+        print("🚀 使用N16优化版混合架构 (共享进程池，解决第二批次速度问题)")
+        main_batch_n16_style_optimized(
+            pcap_in=args.input_file,
+            pcap_out=args.output_file,
+            total_iterations=args.num,
+            pcap_write_interval=args.pcap_interval,
+            process_workers=args.process_workers,
+            thread_workers=args.thread_workers
+        )
+    elif args.architecture == 'n16':
         print("🚀 使用N16风格混合架构 (ProcessPoolExecutor + ThreadPoolExecutor)")
         main_batch_n16_style(
             pcap_in=args.input_file,
@@ -1115,9 +1353,10 @@ def main():
 
 if __name__ == "__main__":
     print("=== N11批量循环处理程序启动 ===")
-    print(f"🏗️ 支持两种架构:")
+    print(f"🏗️ 支持三种架构:")
     print(f"   - original: 原始ThreadPoolExecutor架构")  
-    print(f"   - n16: N16风格ProcessPoolExecutor+ThreadPoolExecutor混合架构 (推荐)")
+    print(f"   - n16: N16风格ProcessPoolExecutor+ThreadPoolExecutor混合架构")
+    print(f"   - n16-optimized: 优化版混合架构 (推荐，解决第二批次速度问题)")
     print(f"📋 初始配置:")
     print(f"  sip1起始值: {INITIAL_SIP1}")
     print(f"  dip1起始值: {INITIAL_DIP1}")
@@ -1136,6 +1375,7 @@ if __name__ == "__main__":
     print(f"  默认输入文件: pcap/N11_create_50p.pcap")
     print(f"  默认输出文件: pcap/N11_create_batch.pcap")
     print(f"  统一IP循环数量: {IP_NUM}")
+    print(f"  TAC循环数量: {TAC_NUM}")
     
     try:
         main()
