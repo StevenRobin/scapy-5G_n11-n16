@@ -762,7 +762,7 @@ def main():
     def get_outfile(base, idx):
         """生成输出文件名"""
         base_name, ext = os.path.splitext(base)
-        return f"{base_name}_{idx+1:03d}{ext}"
+        return f"{base_name}_{idx+1:04d}{ext}"  # 改为04d，生成4位数字
 
     batch_idx = 0
 
@@ -773,7 +773,7 @@ def main():
             print(f"处理批次 {i+1}/{total_batches + (1 if remain > 0 else 0)}")
             all_modified_packets = []
             
-            with ProcessPoolExecutor(max_workers=6) as executor:
+            with ProcessPoolExecutor(max_workers=4) as executor:
                 func = partial(process_one_group, orig_packets_bytes=orig_packets_bytes, tac_num=args.tac_num, ip_num=args.ip_num)
                 results = executor.map(func, range(i * BATCH_SIZE, (i + 1) * BATCH_SIZE))
                 
