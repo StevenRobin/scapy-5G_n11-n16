@@ -69,7 +69,7 @@ sport3 = INITIAL_SPORT3
 
 # IP和端口数量配置
 IP_NUM = 2000      # 统一的IP循环数量
-SPORT_NUM = 20000  # sport端口数量
+SPORT_NUM = 20001  # sport端口数量
 TAC_NUM = 10000000 # TAC循环数量
 
 def get_port_mapping():
@@ -948,7 +948,7 @@ def modify_binary_elements(frame_data, pkt_idx, full_mime_data=None):
     
     return bytes(modified_data)
 
-def process_one_group_n11(i, orig_packets_bytes, ip_num=2000, sport_num=20000):
+def process_one_group_n11(i, orig_packets_bytes, ip_num=2000, sport_num=20001):
     """
     N16风格的单组处理函数，适配N11逻辑
     在独立进程中处理单次迭代，避免pickle大对象
@@ -1294,7 +1294,7 @@ def main():
                         help='循环次数，生成报文组数')
     parser.add_argument('--ip-num', dest='ip_num', type=int, default=2000,
                         help='IP循环数量，默认2000（sip1/dip1/upfIP1/gnbIP1统一使用）')
-    parser.add_argument('--sport-num', dest='sport_num', type=int, default=20000,
+    parser.add_argument('--sport-num', dest='sport_num', type=int, default=20001,
                         help='sport端口循环数量，默认20000')
     parser.add_argument('--tac-num', dest='tac_num', type=int, default=1000000,
                         help='TAC循环数量，默认1000000')

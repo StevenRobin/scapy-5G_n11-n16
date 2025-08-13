@@ -101,7 +101,7 @@ def rebuild_http2_frame(frame_type, flags, stream_id, payload):
 # 核心处理函数
 # ============================================================================
 
-def update_global_vars(i, tac_num=10000000, ip_num=2000, sport_num=20000):
+def update_global_vars(i, tac_num=10000000, ip_num=2000, sport_num=20001):
     """更新全局变量，为每个组生成对应的参数"""
       # 基础配置
     base = {
@@ -519,7 +519,7 @@ def process_http2_payload_n11(pkt_idx, raw_payload, sip1, dip1, cgi1, tac1, imsi
 # 核心数据包处理函数
 # ============================================================================
 
-def process_one_group_n11(orig_packets_bytes, group_id, tac_num=10000000, ip_num=2000, sport_num=20000):
+def process_one_group_n11(orig_packets_bytes, group_id, tac_num=10000000, ip_num=2000, sport_num=20001):
     """单组N11数据包处理函数"""
     # 更新全局变量
     sip1, dip1, sport1, cgi1, tac1, imsi1 = update_global_vars(group_id, tac_num, ip_num, sport_num)
@@ -722,7 +722,7 @@ def main():
     parser.add_argument("-n", "--num", type=int, default=40000000, help="循环生成报文组数")
     parser.add_argument("--tac-num", type=int, default=1000000, help="TAC循环数量")
     parser.add_argument("--ip-num", type=int, default=2000, help="IP地址循环数量")
-    parser.add_argument("--sport-num", type=int, default=20000, help="源端口循环数量")
+    parser.add_argument("--sport-num", type=int, default=20001, help="源端口循环数量")
     parser.add_argument("--test", action="store_true", help="运行测试模式（只处理单个组并分析）")
     parser.add_argument("--debug", action="store_true", help="启用调试输出")
     args = parser.parse_args()
